@@ -4,3 +4,7 @@ This package wraps the widely used redis Go client and extends its feature set w
 
 I intend to use this package in my VPN Detection, that's why the term "reason" is used.
 The string can be used in any other way needed, especially cotaining JSON formatted data.
+
+## TODO
+
+ -Cache requested IPs for like 24 hours in order to improve response time performance.
