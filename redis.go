@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -198,8 +199,8 @@ func (rdb *RedisClient) InsertRangeUnsafe(ipRange, reason string) error {
 	return err
 }
 
-// IPAbove returns the IP above the requested IP
-func (rdb *RedisClient) IPAbove(requestedIP string) (ip *IPAttributes, err error) {
+// Above returns the IP above the requested IP
+func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) {
 	reqIP := net.ParseIP(requestedIP)
 
 	if reqIP == nil {
@@ -239,75 +240,11 @@ func (rdb *RedisClient) IPAbove(requestedIP string) (ip *IPAttributes, err error
 
 	aboveResult := results[0]
 
-	if aboveResult.Score == math.Inf(1) {
-		return nil, ErrUpperBoundary
-	}
-
-	id := ""
-	resultIP := net.IP{}
-
-	switch t := aboveResult.Member.(type) {
-	case string:
-		id = t
-		uIP := big.NewInt(int64(aboveResult.Score))
-		resultIP = IntToIP(uIP, IPv6Bits)
-	default:
-		return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
-	}
-
-	fields, err := rdb.HMGet(id, "low", "high", "reason").Result()
-
-	if err != nil || len(fields) == 0 {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	low := false
-	switch t := fields[0].(type) {
-	case string:
-		low = t != "0"
-	case bool:
-		low = t
-	case int:
-		low = t != 0
-	case nil:
-		low = false
-	default:
-		return nil, fmt.Errorf("%w : 'low' type unknown : %T", ErrNoResult, t)
-	}
-
-	high := false
-	switch t := fields[1].(type) {
-	case string:
-		high = t != "0"
-	case bool:
-		high = t
-	case int:
-		high = t != 0
-	case nil:
-		high = false
-	default:
-		return nil, fmt.Errorf("%w : 'high' type unknown : %T", ErrNoResult, t)
-	}
-
-	reason := ""
-	switch t := fields[2].(type) {
-	case string:
-		reason = t
-	default:
-		return nil, fmt.Errorf("%w : 'reason' type unknown : %T", ErrNoResult, t)
-	}
-
-	return &IPAttributes{
-		ID:         id,
-		IP:         resultIP,
-		Reason:     reason,
-		LowerBound: low,
-		UpperBound: high,
-	}, nil
+	return rdb.fetchIPAttributes(aboveResult)
 }
 
-// IPBelow returns the range delimiting IP that is directly below the requestedIP
-func (rdb *RedisClient) IPBelow(requestedIP string) (ip *IPAttributes, err error) {
+// Below returns the range delimiting IP that is directly below the requestedIP
+func (rdb *RedisClient) Below(requestedIP string) (ip *IPAttributes, err error) {
 	reqIP := net.ParseIP(requestedIP)
 
 	if reqIP == nil {
@@ -346,18 +283,104 @@ func (rdb *RedisClient) IPBelow(requestedIP string) (ip *IPAttributes, err error
 	}
 
 	belowResult := results[0]
+	return rdb.fetchIPAttributes(belowResult)
+}
 
-	if belowResult.Score == math.Inf(-1) {
+// Neighbours returns numNeighbours IPs that are above and numNeighbours IPs that are below the requestedIP
+func (rdb *RedisClient) Neighbours(requestedIP string, numNeighbours uint) (below, above []*IPAttributes, err error) {
+	reqIP := net.ParseIP(requestedIP)
+
+	if reqIP == nil {
+		return nil, nil, ErrInvalidIP
+	}
+
+	uIP, ipBits := IPToInt(reqIP)
+
+	if ipBits > IPv4Bits {
+		return nil, nil, ErrIPv6NotSupported
+	}
+
+	below = make([]*IPAttributes, 0, numNeighbours)
+	above = make([]*IPAttributes, 0, numNeighbours)
+
+	tx := rdb.TxPipeline()
+
+	cmdBelow := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+		Min:    "-inf",
+		Max:    strconv.FormatInt(uIP.Int64(), 10),
+		Offset: 0,
+		Count:  int64(numNeighbours),
+	})
+
+	cmdAbove := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+		Min:    strconv.FormatInt(uIP.Int64(), 10),
+		Max:    "+inf",
+		Offset: 0,
+		Count:  int64(numNeighbours),
+	})
+
+	_, err = tx.Exec()
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	belowResults, err := cmdBelow.Result()
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	for _, result := range belowResults {
+		attr, err := rdb.fetchIPAttributes(result)
+		if errors.Is(err, ErrLowerBoundary) {
+			attr = GlobalLowerBoundary
+		} else if err != nil {
+			return nil, nil, err
+		}
+
+		// prepend for correct order
+		below = append([]*IPAttributes{attr}, below...)
+	}
+
+	aboveResults, err := cmdAbove.Result()
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	for _, result := range aboveResults {
+		attr, err := rdb.fetchIPAttributes(result)
+		if errors.Is(err, ErrUpperBoundary) {
+			attr = GlobalUpperBoundary
+		} else if err != nil {
+			return nil, nil, err
+		}
+
+		above = append(above, attr)
+	}
+
+	return
+}
+
+// fetchIpAttributes gets the remaining IP related attributes that belong to the IP range boundary
+// that is encoded in the redis.Z.Score attribute
+func (rdb *RedisClient) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
+
+	switch result.Score {
+	case math.Inf(-1):
 		return nil, ErrLowerBoundary
+	case math.Inf(1):
+		return nil, ErrUpperBoundary
 	}
 
 	id := ""
 	resultIP := net.IP{}
 
-	switch t := belowResult.Member.(type) {
+	switch t := result.Member.(type) {
 	case string:
 		id = t
-		uIP := big.NewInt(int64(belowResult.Score))
+		uIP := big.NewInt(int64(result.Score))
 		resultIP = IntToIP(uIP, IPv4Bits)
 	default:
 		return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
@@ -413,84 +436,3 @@ func (rdb *RedisClient) IPBelow(requestedIP string) (ip *IPAttributes, err error
 		UpperBound: high,
 	}, nil
 }
-
-// func aboveIP(rdb *redis.Client, ip string) (*ZMember, error) {
-
-// 	netIP := net.ParseIP(ip)
-
-// 	if netIP == nil {
-// 		return nil, fmt.Errorf("invalid IP passed: %s", ip)
-// 	}
-
-// 	intIP, _ := IPToInt(netIP)
-
-// 	tx := rdb.TxPipeline()
-
-// 	cmd := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-// 		Min:    strconv.FormatInt(intIP.Int64(), 10),
-// 		Max:    "+inf",
-// 		Offset: 0,
-// 		Count:  1,
-// 	})
-
-// 	_, err := tx.Exec()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("%w: %v", ErrIPNotFoundAbove, err)
-// 	}
-
-// 	results, err := cmd.Result()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("%w: %v", ErrIPNotFoundAbove, err)
-// 	}
-
-// 	if len(results) < 1 {
-// 		return nil, ErrIPNotFoundAbove
-// 	}
-
-// 	zm := ZMember{}
-// 	err = zm.FromZ(results[0])
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &zm, nil
-// }
-
-// func belowIP(rdb *redis.Client, ip string) (*ZMember, error) {
-// 	netIP := net.ParseIP(ip)
-
-// 	if netIP == nil {
-// 		return nil, fmt.Errorf("invalid IP passed: %s", ip)
-// 	}
-
-// 	intIP, _ := IPToInt(netIP)
-
-// 	tx := rdb.TxPipeline()
-
-// 	cmd := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-// 		Min:    strconv.FormatInt(intIP.Int64(), 10),
-// 		Max:    "+inf",
-// 		Offset: 0,
-// 		Count:  1,
-// 	})
-
-// 	_, err := tx.Exec()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("%w: %v", ErrIPNotFoundAbove, err)
-// 	}
-
-// 	results, err := cmd.Result()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("%w: %v", ErrIPNotFoundAbove, err)
-// 	}
-
-// 	if len(results) < 1 {
-// 		return nil, ErrIPNotFoundAbove
-// 	}
-
-// 	zm := ZMember{}
-// 	err = zm.FromZ(results[0])
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &zm, nil
-// }

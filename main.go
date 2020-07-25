@@ -21,37 +21,57 @@ func main() {
 	}
 	defer rdb.Close()
 
-	// err = rdb.InsertRangeUnsafe("122.0.0.1 - 123.0.0.1", "test reason")
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-
-	ip, err := rdb.IPBelow("123.0.0.0")
-
+	err = rdb.InsertRangeUnsafe("122.0.0.1 - 123.0.0.1", "test reason")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println(ip)
+	err = rdb.InsertRangeUnsafe("127.0.0.1 - 128.0.0.1", "test reason")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-	intIP, _ := IPToInt(ip.IP)
+	testIP := "121.0.0.1"
 
-	fmt.Println("IP Integer representation: ", intIP)
+	ip, err := rdb.Below(testIP)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("below:", ip)
+		intIP, _ := IPToInt(ip.IP)
+		fmt.Println("IP Integer representation: ", intIP)
+	}
 
-	// err := insertRange(rdb, "123.0.0.0/24", "VPN")
-	// if err != nil {
-	// 	log.Println("error: ", err)
-	// }
+	ip, err = rdb.Above(testIP)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("above:", ip)
+		intIP, _ := IPToInt(ip.IP)
+		fmt.Println("IP Integer representation: ", intIP)
+	}
 
-	// zm, err := aboveIP(rdb, "123.0.0.20")
-	// if err != nil {
-	// 	log.Println(err)
-	// } else {
-	// 	fmt.Printf("Above IP: %s ID: %s", zm.IP.String(), zm.ID)
-	// }
-	fmt.Println("Finished successfully!")
+	fmt.Print("Finished successfully!\n\n\n")
+
+	below, above, err := rdb.Neighbours(testIP, 2)
+
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		for _, ip := range below {
+			fmt.Println("below:", ip)
+			intIP, _ := IPToInt(ip.IP)
+			fmt.Println("IP as int:", intIP)
+		}
+
+		for _, ip := range above {
+			fmt.Println("above:", ip)
+			intIP, _ := IPToInt(ip.IP)
+			fmt.Println("IP as int:", intIP)
+		}
+	}
 
 	//<-interrupt
 
