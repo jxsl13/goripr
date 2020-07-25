@@ -125,7 +125,9 @@ func NewRedisClient(options RedisOptions) (*RedisClient, error) {
 		return nil, ErrConnectionFailed
 	}
 
-	// idempotent
+	// idempotent and important to mark these boundaries
+	// we always want to have the infinite boundaries available in order to tell,
+	// that there are no more elements below or above some other element.
 	_, err = rdb.ZAdd(IPRangesKey,
 		redis.Z{
 			Score:  math.Inf(-1),
@@ -197,6 +199,73 @@ func (rdb *RedisClient) InsertRangeUnsafe(ipRange, reason string) error {
 	_, err = tx.Exec()
 
 	return err
+}
+
+// InsertRange safely inserts a new range into the database.
+// Bigger ranges are sliced into smaller ranges if the Reason strings differ.
+// If the reason strings are equal, ranges are expanded as expected.
+func (rdb *RedisClient) InsertRange(ipRange, reason string) error {
+	low, high, err := Boundaries(ipRange)
+
+	if err != nil {
+		return err
+	}
+
+	_, lowBits := IPToInt(low)
+	_, highBits := IPToInt(high)
+
+	if lowBits > IPv4Bits || highBits > IPv4Bits {
+		return ErrIPv6NotSupported
+	}
+	return ErrInvalidRange
+}
+
+// Inside returns all IP range boundaries that are within a given range
+func (rdb *RedisClient) Inside(ipRange string) (inside []*IPAttributes, err error) {
+	low, high, err := Boundaries(ipRange)
+
+	if err != nil {
+		return nil, err
+	}
+
+	lowInt, lowBits := IPToInt(low)
+	highInt, highBits := IPToInt(high)
+
+	if lowBits > IPv4Bits || highBits > IPv4Bits {
+		return nil, ErrIPv6NotSupported
+	}
+
+	inside = make([]*IPAttributes, 0, 2)
+
+	tx := rdb.TxPipeline()
+
+	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+		Min: strconv.FormatInt(lowInt.Int64(), 10),
+		Max: strconv.FormatInt(highInt.Int64(), 10),
+	})
+
+	_, err = tx.Exec()
+
+	if err != nil {
+		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	insideResults, err := cmdInside.Result()
+
+	if err != nil {
+		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	for _, result := range insideResults {
+		attr, err := rdb.fetchIPAttributes(result)
+		if err != nil {
+			return nil, err
+		}
+
+		inside = append(inside, attr)
+	}
+
+	return
 }
 
 // Above returns the IP above the requested IP

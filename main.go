@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 )
 
 func main() {
 
-	//interrupt := make(chan os.Signal, 1)
-	//signal.Notify(interrupt, os.Interrupt)
-	//defer close(interrupt)
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+	defer close(interrupt)
 
 	rdb, err := NewRedisClient(RedisOptions{
 		Addr:     "localhost:6379",
@@ -31,6 +33,18 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 		return
+	}
+
+	insideRange := "122.0.0.1 - 128.0.0.1"
+
+	inside, err := rdb.Inside(insideRange)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("Inside: ", insideRange)
+		for _, attr := range inside {
+			fmt.Println(attr)
+		}
 	}
 
 	testIP := "121.0.0.1"
@@ -73,7 +87,7 @@ func main() {
 		}
 	}
 
-	//<-interrupt
+	<-interrupt
 
 	_, err = rdb.FlushAll().Result()
 	if err != nil {
