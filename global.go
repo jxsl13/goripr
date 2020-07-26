@@ -20,9 +20,9 @@ var (
 	// IPRangesKey contains the key name of the sorted set that contains the IPs (integers)
 	IPRangesKey = "________________IP_RANGES________________"
 
-	// BoundaryAttributeMapKey is the name of the object that maps uuids of range boundaries to specific reasons
-	// also maps a boundaries' type, like beginning, end of range, etc.
-	BoundaryAttributeMapKey = "________________REASON_MAP_______________"
+	// DeleteReason is given to a specific deltion range
+	// on a second attept (not aromic) the range is then finally deleted.
+	DeleteReason = "_________________DELETE_________________"
 
 	// ErrConnectionFailed is returned when the connection to the redis database fails.
 	ErrConnectionFailed = errors.New("failed to establish a connection to the redis database")

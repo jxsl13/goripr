@@ -47,6 +47,18 @@ func main() {
 		}
 	}
 
+	insideRange = "123.0.0.1"
+
+	inside, err = rdb.Inside(insideRange)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("Inside: ", insideRange)
+		for _, attr := range inside {
+			fmt.Println(attr)
+		}
+	}
+
 	testIP := "121.0.0.1"
 
 	ip, err := rdb.Below(testIP)
