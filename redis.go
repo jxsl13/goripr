@@ -165,7 +165,10 @@ func (rdb *RedisClient) InsertRangeUnsafe(ipRange, reason string) error {
 		return ErrIPv6NotSupported
 	}
 
-	return rdb.insertRangeIntUnsafe(lowInt.Int64(), highInt.Int64(), reason)
+	lowInt64 := lowInt.Int64()
+	highInt64 := highInt.Int64()
+
+	return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
 }
 
 // insertRangeIntUnsafe does not do any range checks, allowing for a little bit more performance
@@ -224,16 +227,18 @@ func (rdb *RedisClient) insertBoundaries(boundaries []*IPAttributes) error {
 			uuid = boundary.ID
 		}
 
-		intIP, ipBits := IPToInt(boundary.IP)
+		bigIntIP, ipBits := IPToInt(boundary.IP)
 
 		if ipBits > IPv4Bits {
 			return ErrIPv6NotSupported
 		}
 
+		intIP := bigIntIP.Int64()
+
 		// insert into sorted set
 		tx.ZAdd(IPRangesKey,
 			redis.Z{
-				Score:  float64(intIP.Int64()),
+				Score:  float64(intIP),
 				Member: uuid,
 			},
 		)
@@ -272,7 +277,8 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 		return ErrIPv6NotSupported
 	}
 
-	lowInt64, highInt64 := lowInt.Int64(), highInt.Int64()
+	lowInt64 := lowInt.Int64()
+	highInt64 := highInt.Int64()
 
 	return rdb.insertRangeInt(lowInt64, highInt64, reason)
 }
@@ -479,7 +485,10 @@ func (rdb *RedisClient) Inside(ipRange string) (inside []*IPAttributes, err erro
 		return nil, ErrIPv6NotSupported
 	}
 
-	return rdb.insideIntRange(lowInt.Int64(), highInt.Int64())
+	lowInt64 := lowInt.Int64()
+	highInt64 := highInt.Int64()
+
+	return rdb.insideIntRange(lowInt64, highInt64)
 }
 
 // insideIntIDs returns a list of range boundary IDs that lie within lowInt64 through highInt64.
@@ -598,7 +607,7 @@ func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) 
 		return nil, ErrInvalidIP
 	}
 
-	uIP, ipBits := IPToInt(reqIP)
+	bigIntIP, ipBits := IPToInt(reqIP)
 
 	if ipBits > IPv4Bits {
 		return nil, ErrIPv6NotSupported
@@ -606,8 +615,10 @@ func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) 
 
 	tx := rdb.TxPipeline()
 
+	intIP := bigIntIP.Int64()
+
 	cmd := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    strconv.FormatInt(uIP.Int64(), 10),
+		Min:    strconv.FormatInt(intIP, 10),
 		Max:    "+inf",
 		Offset: 0,
 		Count:  1,
@@ -642,7 +653,7 @@ func (rdb *RedisClient) Below(requestedIP string) (ip *IPAttributes, err error) 
 		return nil, ErrInvalidIP
 	}
 
-	uIP, ipBits := IPToInt(reqIP)
+	bigIntIP, ipBits := IPToInt(reqIP)
 
 	if ipBits > IPv4Bits {
 		return nil, ErrIPv6NotSupported
@@ -650,9 +661,11 @@ func (rdb *RedisClient) Below(requestedIP string) (ip *IPAttributes, err error) 
 
 	tx := rdb.TxPipeline()
 
+	intIP := bigIntIP.Int64()
+
 	cmd := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min:    "-inf",
-		Max:    strconv.FormatInt(uIP.Int64(), 10),
+		Max:    strconv.FormatInt(intIP, 10),
 		Offset: 0,
 		Count:  1,
 	})
@@ -737,13 +750,15 @@ func (rdb *RedisClient) Neighbours(requestedIP string, numNeighbours uint) (belo
 		return nil, nil, ErrInvalidIP
 	}
 
-	bIP, ipBits := IPToInt(reqIP)
+	bigIntIP, ipBits := IPToInt(reqIP)
 
 	if ipBits > IPv4Bits {
 		return nil, nil, ErrIPv6NotSupported
 	}
 
-	return rdb.neighboursInt(bIP.Int64(), numNeighbours)
+	intIP := bigIntIP.Int64()
+
+	return rdb.neighboursInt(intIP, numNeighbours)
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
@@ -1010,13 +1025,15 @@ func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
 		return "", ErrInvalidIP
 	}
 
-	uIP, ipBits := IPToInt(reqIP)
+	bigIntIP, ipBits := IPToInt(reqIP)
 
 	if ipBits > IPv4Bits {
 		return "", ErrIPv6NotSupported
 	}
 
-	belowN, aboveN, err := rdb.neighboursInt(uIP.Int64(), 1)
+	intIP := bigIntIP.Int64()
+
+	belowN, aboveN, err := rdb.neighboursInt(intIP, 1)
 	if err != nil {
 		return "", err
 	}
