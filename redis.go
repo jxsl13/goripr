@@ -966,6 +966,7 @@ func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
 		return "", err
 	}
 
+	// this is enforced by the idempotent database initialization.
 	below, above := belowN[0], aboveN[0]
 
 	inRange := below.LowerBound && !below.UpperBound &&
