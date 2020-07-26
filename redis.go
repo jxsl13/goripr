@@ -272,7 +272,9 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 		return ErrIPv6NotSupported
 	}
 
-	return rdb.insertRangeInt(lowInt.Int64(), highInt.Int64(), reason)
+	lowInt64, highInt64 := lowInt.Int64(), highInt.Int64()
+
+	return rdb.insertRangeInt(lowInt64, highInt64, reason)
 }
 
 // insertRangeInt properly inserts new ranges into the database, removing other ranges, cutting them, shrinking them, etc.
