@@ -5,8 +5,6 @@ import (
 	"math/big"
 	"net"
 	"regexp"
-
-	"github.com/apparentlymart/go-cidr/cidr"
 )
 
 var (
@@ -33,7 +31,7 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w : %v", ErrInvalidRange, err)
 		}
-		low, high = cidr.AddressRange(netRange)
+		low, high = AddressRange(netRange)
 
 	} else if matches := ipRangeRegex.FindStringSubmatch(ipRange); len(matches) == 3 {
 
