@@ -192,11 +192,13 @@ func (rdb *RedisClient) insertRangeIntUnsafe(lowInt, highInt int64, reason strin
 	)
 
 	tx.HMSet(lowMember, map[string]interface{}{
+		"ip":     IntToIP(big.NewInt(lowInt), IPv4Bits).String(),
 		"low":    true,
 		"reason": reason,
 	})
 
 	tx.HMSet(highMember, map[string]interface{}{
+		"ip":     IntToIP(big.NewInt(highInt), IPv4Bits).String(),
 		"high":   true,
 		"reason": reason,
 	})
@@ -288,7 +290,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 	// todo check if this lies outside of th erange
 	belowLowerClosest := belowLowerBound[len(belowLowerBound)-1]
 	aboveUpperClosest := aboveUpperBound[0]
-
+	// todo: move cuts to their respective positions
 	cutBelow := &IPAttributes{
 		IP:         IntToIP(big.NewInt(lowInt64-1), IPv4Bits),
 		Reason:     belowLowerClosest.Reason,
@@ -309,7 +311,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 
 	cutAbove := &IPAttributes{
 		IP:         IntToIP(big.NewInt(highInt64+1), IPv4Bits),
-		Reason:     belowLowerClosest.Reason,
+		Reason:     aboveUpperClosest.Reason,
 		LowerBound: true,
 	}
 
@@ -341,6 +343,8 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 
 			// sets boundaries below and above out to be inserted range
 			return rdb.insertBoundaries(newRangeBoundaries)
+		} else {
+			panic("what is this case")
 		}
 
 	}
@@ -543,6 +547,40 @@ func (rdb *RedisClient) insideIntRange(lowInt64, highInt64 int64) (inside []*IPA
 	return
 }
 
+// insideInfRange returns all ranges
+func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
+	inside = make([]*IPAttributes, 0, 3)
+
+	tx := rdb.TxPipeline()
+
+	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+		Min: "-inf",
+		Max: "+inf",
+	})
+
+	_, err = tx.Exec()
+
+	if err != nil {
+		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	insideResults, err := cmdInside.Result()
+	if err != nil {
+		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	for _, result := range insideResults {
+		attr, err := rdb.fetchIPAttributes(result)
+		if err != nil {
+			return nil, err
+		}
+
+		inside = append(inside, attr)
+	}
+
+	return
+}
+
 // Above returns the IP above the requested IP
 func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) {
 	reqIP := net.ParseIP(requestedIP)
@@ -638,7 +676,7 @@ func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLowe
 		Min:    "-inf",
 		Max:    strconv.FormatInt(lower-1, 10),
 		Offset: 0,
-		Count:  1,
+		Count:  num,
 	})
 
 	cmdAboveUpper := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
@@ -654,6 +692,12 @@ func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLowe
 	}
 
 	belowLowerResults, err := cmdBelowLower.Result()
+
+	// inverse slice to have the order from -inf .... +inf
+	for i, j := 0, len(belowLowerResults)-1; i < j; i, j = i+1, j-1 {
+		belowLowerResults[i], belowLowerResults[j] = belowLowerResults[j], belowLowerResults[i]
+	}
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
@@ -765,9 +809,9 @@ func (rdb *RedisClient) fetchIPAttributes(result redis.Z) (*IPAttributes, error)
 
 	switch result.Score {
 	case math.Inf(-1):
-		return nil, ErrLowerBoundary
+		return GlobalLowerBoundary, nil
 	case math.Inf(1):
-		return nil, ErrUpperBoundary
+		return GlobalUpperBoundary, nil
 	}
 
 	id := ""
@@ -841,9 +885,11 @@ func (rdb *RedisClient) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttribute
 	for _, result := range results {
 		switch result.Score {
 		case math.Inf(-1):
-			return nil, ErrLowerBoundary
+			ipAttributes = append(ipAttributes, GlobalLowerBoundary)
+			continue
 		case math.Inf(1):
-			return nil, ErrUpperBoundary
+			ipAttributes = append(ipAttributes, GlobalUpperBoundary)
+			continue
 		}
 
 		id := ""

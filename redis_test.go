@@ -16,23 +16,25 @@ var (
 	}
 )
 
-func consistent(rdb *RedisClient) bool {
-	attributes, err := rdb.Inside("0.0.0.0 - 255.255.255.255")
+func consistent(rdb *RedisClient, t *testing.T) bool {
+	attributes, err := rdb.insideInfRange()
 	if err != nil {
 		panic(err)
 	}
-	const LowerBound = 1
-	const UpperBound = 0
+	const LowerBound = 0
+	const UpperBound = 1
+
+	t.Logf("%d attributes fetched from database.", len(attributes))
+	for _, attr := range attributes {
+		t.Logf("\t\t%16s\tupper: %5t\tlower: %5t", attr.IP.String(), attr.UpperBound, attr.LowerBound)
+	}
 
 	cnt := 0
 	state := 0
-	for idx, attr := range attributes {
-		if idx == 0 && !attr.LowerBound {
-			return false
-		}
+	for _, attr := range attributes {
 
 		if attr.LowerBound && attr.UpperBound {
-			if state != UpperBound {
+			if state != LowerBound {
 				return false
 			}
 
@@ -52,7 +54,7 @@ func consistent(rdb *RedisClient) bool {
 		}
 	}
 
-	return state == UpperBound
+	return state == LowerBound
 }
 
 func initRDB() *RedisClient {
@@ -64,10 +66,29 @@ func initRDB() *RedisClient {
 	if err != nil {
 		panic(err)
 	}
+
+	_, err = rdb.FlushAll().Result()
+	if err != nil {
+		panic(err)
+	}
+
+	rdb.Close()
+
+	rdb, err = NewRedisClient(RedisOptions{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	if err != nil {
+		panic(err)
+	}
 	return rdb
 }
 
 func TestRedisClient_Insert(t *testing.T) {
+
+	rdb := initRDB()
+	defer rdb.Close()
 
 	type args struct {
 		ipRanges []string
@@ -83,22 +104,18 @@ func TestRedisClient_Insert(t *testing.T) {
 	for _, tt := range tests {
 
 		t.Run(tt.name, func(t *testing.T) {
-			rdb := initRDB()
-			defer rdb.Close()
-
-			// initial consistency
-			if !consistent(rdb) {
-				t.Errorf("RedisClient.Insert() error = Database Inconsistent before test")
-			}
 
 			// consistency after every insert
 			for _, ipRange := range tt.args.ipRanges {
+
 				if err := rdb.Insert(ipRange, tt.args.reason); (err != nil) != tt.wantErr {
 					t.Errorf("RedisClient.Insert() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
-				if !consistent(rdb) {
-					t.Errorf("RedisClient.Insert() error = Database Inconsistent after inserting range: %s", ipRange)
+				if !consistent(rdb, t) {
+					t.Fatalf("RedisClient.Insert() error : Database inconsistent after inserting range: %s", ipRange)
+				} else {
+					t.Logf("RedisClient.Insert() Info  : Database is consistent after inserting range: %s", ipRange)
 				}
 			}
 
