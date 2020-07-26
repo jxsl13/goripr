@@ -944,3 +944,41 @@ func idsOf(attributes []*IPAttributes) []string {
 	}
 	return ids
 }
+
+// InAnyRange returns a non empty reason and nil for an error if the given IP is
+// found within any previously inserted IP range.
+// An error is returned if the request fails and thus is false.
+func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
+	reqIP := net.ParseIP(ip)
+
+	if reqIP == nil {
+		return "", ErrInvalidIP
+	}
+
+	uIP, ipBits := IPToInt(reqIP)
+
+	if ipBits > IPv4Bits {
+		return "", ErrIPv6NotSupported
+	}
+
+	belowN, aboveN, err := rdb.neighboursInt(uIP.Int64(), 1)
+	if err != nil {
+		return "", err
+	}
+
+	below, above := belowN[0], aboveN[0]
+
+	inRange := below.LowerBound && !below.UpperBound &&
+		!above.LowerBound && above.UpperBound
+
+	if below.Reason != above.Reason {
+		panic(fmt.Errorf(" '%s'.Reason != '%s'.Reason : '%s' != '%s'", below.ID, above.ID, below.Reason, above.Reason))
+	}
+
+	if !inRange {
+		return "", ErrIPNotFoundInAnyRange
+	}
+
+	return below.Reason, nil
+
+}

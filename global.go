@@ -2,19 +2,6 @@ package main
 
 import "errors"
 
-const (
-	// Boundary represents the infinity boundaries that are not IPs
-	Boundary = 1 << iota
-	// BeginRange identifies an IP value as begginning of a range.
-	BeginRange
-
-	// EndRange identifies an IP to represent the end of a range.
-	EndRange
-
-	// BeginAndEndRange identifies an IP to be the IP range itself.
-	BeginAndEndRange
-)
-
 var (
 
 	// IPRangesKey contains the key name of the sorted set that contains the IPs (integers)
@@ -47,6 +34,9 @@ var (
 
 	// ErrIPNotFoundBelow is returned if no IP was found below the requested one
 	ErrIPNotFoundBelow = errors.New("did not find any IPs below the requested ip")
+
+	// ErrIPNotFoundInAnyRange is returned if the passed IP is not contained in any ranges
+	ErrIPNotFoundInAnyRange = errors.New("the given IP was not found in any database ranges")
 
 	// ErrUpperBoundary is returned if the next higher IP is +inf
 	ErrUpperBoundary = errors.New("next higher IP is the +inf boundary")
