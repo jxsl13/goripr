@@ -158,12 +158,8 @@ func (rdb *RedisClient) InsertRangeUnsafe(ipRange, reason string) error {
 		return err
 	}
 
-	lowInt, lowBits := IPToInt(low)
-	highInt, highBits := IPToInt(high)
-
-	if lowBits > IPv4Bits || highBits > IPv4Bits {
-		return ErrIPv6NotSupported
-	}
+	lowInt, _ := IPToInt(low)
+	highInt, _ := IPToInt(high)
 
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
@@ -270,12 +266,8 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 		return err
 	}
 
-	lowInt, lowBits := IPToInt(low)
-	highInt, highBits := IPToInt(high)
-
-	if lowBits > IPv4Bits || highBits > IPv4Bits {
-		return ErrIPv6NotSupported
-	}
+	lowInt, _ := IPToInt(low)
+	highInt, _ := IPToInt(high)
 
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
@@ -444,12 +436,8 @@ func (rdb *RedisClient) Remove(ipRange string) error {
 		return err
 	}
 
-	lowInt, lowBits := IPToInt(low)
-	highInt, highBits := IPToInt(high)
-
-	if lowBits > IPv4Bits || highBits > IPv4Bits {
-		return ErrIPv6NotSupported
-	}
+	lowInt, _ := IPToInt(low)
+	highInt, _ := IPToInt(high)
 
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
@@ -478,12 +466,8 @@ func (rdb *RedisClient) Inside(ipRange string) (inside []*IPAttributes, err erro
 		return nil, err
 	}
 
-	lowInt, lowBits := IPToInt(low)
-	highInt, highBits := IPToInt(high)
-
-	if lowBits > IPv4Bits || highBits > IPv4Bits {
-		return nil, ErrIPv6NotSupported
-	}
+	lowInt, _ := IPToInt(low)
+	highInt, _ := IPToInt(high)
 
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
@@ -601,17 +585,13 @@ func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
 
 // Above returns the IP above the requested IP
 func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) {
-	reqIP := net.ParseIP(requestedIP)
+	reqIP, _, err := Boundaries(requestedIP)
 
-	if reqIP == nil {
-		return nil, ErrInvalidIP
+	if err != nil {
+		return nil, err
 	}
 
-	bigIntIP, ipBits := IPToInt(reqIP)
-
-	if ipBits > IPv4Bits {
-		return nil, ErrIPv6NotSupported
-	}
+	bigIntIP, _ := IPToInt(reqIP)
 
 	tx := rdb.TxPipeline()
 
@@ -647,17 +627,14 @@ func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) 
 
 // Below returns the range delimiting IP that is directly below the requestedIP
 func (rdb *RedisClient) Below(requestedIP string) (ip *IPAttributes, err error) {
-	reqIP := net.ParseIP(requestedIP)
 
-	if reqIP == nil {
-		return nil, ErrInvalidIP
+	reqIP, _, err := Boundaries(requestedIP)
+
+	if err != nil {
+		return nil, err
 	}
 
-	bigIntIP, ipBits := IPToInt(reqIP)
-
-	if ipBits > IPv4Bits {
-		return nil, ErrIPv6NotSupported
-	}
+	bigIntIP, _ := IPToInt(reqIP)
 
 	tx := rdb.TxPipeline()
 
@@ -744,17 +721,14 @@ func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLowe
 
 // Neighbours returns numNeighbours IPs that are above and numNeighbours IPs that are below the requestedIP
 func (rdb *RedisClient) Neighbours(requestedIP string, numNeighbours uint) (below, above []*IPAttributes, err error) {
-	reqIP := net.ParseIP(requestedIP)
 
-	if reqIP == nil {
-		return nil, nil, ErrInvalidIP
+	reqIP, _, err := Boundaries(requestedIP)
+
+	if err != nil {
+		return nil, nil, err
 	}
 
-	bigIntIP, ipBits := IPToInt(reqIP)
-
-	if ipBits > IPv4Bits {
-		return nil, nil, ErrIPv6NotSupported
-	}
+	bigIntIP, _ := IPToInt(reqIP)
 
 	intIP := bigIntIP.Int64()
 
@@ -1019,17 +993,13 @@ func idsOf(attributes []*IPAttributes) []string {
 // found within any previously inserted IP range.
 // An error is returned if the request fails and thus is false.
 func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
-	reqIP := net.ParseIP(ip)
+	reqIP, _, err := Boundaries(ip)
 
-	if reqIP == nil {
-		return "", ErrInvalidIP
+	if err != nil {
+		return "", err
 	}
 
-	bigIntIP, ipBits := IPToInt(reqIP)
-
-	if ipBits > IPv4Bits {
-		return "", ErrIPv6NotSupported
-	}
+	bigIntIP, _ := IPToInt(reqIP)
 
 	intIP := bigIntIP.Int64()
 

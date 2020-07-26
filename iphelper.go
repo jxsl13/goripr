@@ -64,6 +64,13 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 		return nil, nil, ErrInvalidRange
 	}
 
+	// force IPv4
+	low = low.To4()
+	high = high.To4()
+	if low == nil || high == nil {
+		return nil, nil, ErrIPv6NotSupported
+	}
+
 	// returns low, high, nil
 	return
 }
