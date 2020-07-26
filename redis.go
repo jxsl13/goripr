@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"sort"
 	"strconv"
 	"time"
 
@@ -500,6 +501,9 @@ func (rdb *RedisClient) insideIntIDs(lowInt64, highInt64 int64) ([]string, error
 		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
+	// force sorting
+	sort.Sort(byScore(insideResults[:]))
+
 	ret := make([]string, 0, len(insideResults))
 
 	for _, result := range insideResults {
@@ -544,6 +548,8 @@ func (rdb *RedisClient) insideIntRange(lowInt64, highInt64 int64) (inside []*IPA
 
 		inside = append(inside, attr)
 	}
+
+	sort.Sort(byAttributeIP(inside[:]))
 	return
 }
 
@@ -578,6 +584,7 @@ func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
 		inside = append(inside, attr)
 	}
 
+	sort.Sort(byAttributeIP(inside[1 : len(inside)-2]))
 	return
 }
 

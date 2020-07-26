@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sort"
 	"testing"
 )
 
@@ -27,7 +26,6 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 	if err != nil {
 		panic(err)
 	}
-	sort.Sort(byAttributeIP(attributes[1 : len(attributes)-2]))
 
 	const LowerBound = 0
 	const UpperBound = 1
