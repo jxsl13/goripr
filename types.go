@@ -35,6 +35,21 @@ func (ia *IPAttributes) Equal(other *IPAttributes) bool {
 		ia.Reason == other.Reason
 }
 
+// IPInt64 returns the IP's int64 value
+func (ia *IPAttributes) IPInt64() int64 {
+	bigInt, bits := IPToInt(ia.IP)
+	// only working with IPv4
+	if bits > IPv4Bits {
+		panic("contained value is bigger than IPv4")
+	}
+	return bigInt.Int64()
+}
+
+// EqualIP returns true if the IPs of both are equal
+func (ia *IPAttributes) EqualIP(other *IPAttributes) bool {
+	return ia.IP.Equal(other.IP)
+}
+
 // IsInfBoundary returns true if ia is either the GlobalUpperBoundary or the GlobalLowerBoundary
 func (ia *IPAttributes) IsInfBoundary() bool {
 	return ia.Equal(GlobalLowerBoundary) || ia.Equal(GlobalUpperBoundary)
