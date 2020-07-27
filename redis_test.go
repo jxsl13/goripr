@@ -1,7 +1,10 @@
 package main
 
 import (
+	"log"
+	"math/rand"
 	"testing"
+	"time"
 )
 
 type rangeReason struct {
@@ -18,6 +21,23 @@ var (
 		{"201.0.0.0 - 202.0.0.0", "fifth"},
 		{"203.0.0.0 - 204.0.0.0", "seventh"},
 		{"205.0.0.0 - 235.0.0.0", "eighth"},
+		{"190.0.0.0 - 235.0.0.0", "ninth"},
+		{"190.0.0.0 - 195.0.0.0", "10th"},
+		{"195.0.0.0 - 196.0.0.0", "11th"},
+		{"196.0.0.0 - 197.0.0.0", "12th"},
+		{"197.0.0.0 - 235.0.0.0", "13th"},
+		{"188.0.0.0 - 198.0.0.0", "14th"},
+		{"188.0.0.0 - 235.0.0.0", "15th"},
+		{"188.0.0.0 - 235.0.0.255", "16th"},
+		{"187.255.255.255 - 235.0.1.0", "17th"},
+		{"188.0.0.1 - 235.0.0.254", "18th"},
+		{"123.0.0.0 - 123.0.0.10", "19th"},
+		{"123.0.0.1 - 123.0.0.9", "20th"},
+		{"235.0.0.255", "21st"},
+		{"188.0.0.0", "22nd"},
+		{"188.0.0.0", "23rd"},
+		{"123.0.0.0 - 123.0.0.2", "24th"},
+		{"123.0.0.1", "25th"},
 	}
 )
 
@@ -91,6 +111,17 @@ func initRDB() *RedisClient {
 	return rdb
 }
 
+func shuffle(a []rangeReason) []rangeReason {
+	var b []rangeReason
+	copy(b, a)
+
+	seed := time.Now().UnixNano()
+	log.Println("seed =", seed)
+	rand.Seed(seed)
+	rand.Shuffle(len(b), func(i, j int) { b[i], b[j] = b[j], b[i] })
+	return b
+}
+
 func TestRedisClient_Insert(t *testing.T) {
 
 	rdb := initRDB()
@@ -105,6 +136,15 @@ func TestRedisClient_Insert(t *testing.T) {
 		wantErr bool
 	}{
 		{"simple insert all", args{ranges[:]}, false},
+		{"shuffle 1", args{shuffle(ranges[:])}, false},
+		{"shuffle 2", args{shuffle(ranges[:])}, false},
+		{"shuffle 3", args{shuffle(ranges[:])}, false},
+		{"shuffle 4", args{shuffle(ranges[:])}, false},
+		{"shuffle 5", args{shuffle(ranges[:])}, false},
+		{"shuffle 7", args{shuffle(ranges[:])}, false},
+		{"shuffle 8", args{shuffle(ranges[:])}, false},
+		{"shuffle 9", args{shuffle(ranges[:])}, false},
+		{"shuffle 10", args{shuffle(ranges[:])}, false},
 	}
 	for _, tt := range tests {
 
@@ -118,12 +158,11 @@ func TestRedisClient_Insert(t *testing.T) {
 				}
 
 				if !consistent(rdb, t) {
-					t.Fatalf("rdb.Insert() error : Database inconsistent after inserting range: %s", ipRange.Range)
+					t.Fatalf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
 				} else {
-					t.Logf("rdb.Insert() Info  : Database is consistent after inserting range: %s", ipRange.Range)
+					t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
 				}
 			}
-
 			rdb.FlushAll().Result()
 		})
 	}
