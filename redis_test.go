@@ -40,7 +40,7 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 	for _, attr := range attributes {
 
 		if attr.LowerBound && attr.UpperBound {
-			if state != LowerBound {
+			if state != UpperBound {
 				return false
 			}
 
