@@ -272,7 +272,110 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
 
-	return rdb.insertRangeInt(lowInt64, highInt64, reason)
+	if lowInt64 != highInt64 {
+		return rdb.insertRangeInt(lowInt64, highInt64, reason)
+	}
+	return rdb.insertSingleInt(lowInt64, reason)
+}
+
+func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
+
+	below, above, err := rdb.neighboursInt(singleInt, 2)
+	if err != nil {
+		return err
+	}
+
+	closestBelow := below[len(below)-1]
+	closestAbove := above[0]
+
+	singleBoundary := &IPAttributes{
+		IP:         IntToIP(big.NewInt(singleInt), IPv4Bits),
+		Reason:     reason,
+		LowerBound: true,
+		UpperBound: true,
+	}
+
+	if closestBelow.Equal(closestAbove) {
+
+		// hittig an edge / a boundary directly
+		hitBoundary := closestBelow
+
+		// remove the hit boundary
+		err := rdb.removeIDs([]string{hitBoundary.ID})
+		if err != nil {
+			return err
+		}
+
+		if !hitBoundary.IsSingleBoundary() {
+			// hit a single value range
+			// simply replace it
+
+			newRange := []*IPAttributes{
+				singleBoundary,
+			}
+
+			return rdb.insertBoundaries(newRange)
+
+		} else if hitBoundary.LowerBound {
+			// must be single boundary, meaning a range with at least two members
+
+			cutAbove := &IPAttributes{
+				IP:         IntToIP(big.NewInt(hitBoundary.IPInt64()+1), IPv4Bits),
+				Reason:     hitBoundary.Reason,
+				LowerBound: true,
+			}
+
+			newRange := []*IPAttributes{
+				singleBoundary,
+				cutAbove,
+			}
+
+			return rdb.insertBoundaries(newRange)
+
+		} else {
+			// hitBoundary.UpperBound
+
+			cutBelow := &IPAttributes{
+				IP:         IntToIP(big.NewInt(hitBoundary.IPInt64()-1), IPv4Bits),
+				Reason:     hitBoundary.Reason,
+				UpperBound: true,
+			}
+
+			newRange := []*IPAttributes{
+				cutBelow,
+				singleBoundary,
+			}
+
+			return rdb.insertBoundaries(newRange)
+		}
+
+	} else if closestBelow.LowerBound && closestAbove.UpperBound &&
+		closestBelow.IsSingleBoundary() && closestAbove.IsSingleBoundary() {
+		// inside a range
+		// TODO: try not to hit upper or lower boundaries when cutting above or below the current one
+		cutBelow := &IPAttributes{
+			IP:         IntToIP(big.NewInt(singleInt-1), IPv4Bits),
+			Reason:     closestBelow.Reason,
+			UpperBound: true,
+		}
+		cutAbove := &IPAttributes{
+			IP:         IntToIP(big.NewInt(singleInt+1), IPv4Bits),
+			Reason:     closestAbove.Reason,
+			LowerBound: true,
+		}
+
+		newRange := []*IPAttributes{
+			cutBelow,
+			singleBoundary,
+			cutAbove,
+		}
+		return rdb.insertBoundaries(newRange)
+	}
+
+	// not on boundary or inside a range
+	newRange := []*IPAttributes{singleBoundary}
+
+	return rdb.insertBoundaries(newRange)
 }
 
 // insertRangeInt properly inserts new ranges into the database, removing other ranges, cutting them, shrinking them, etc.
