@@ -45,8 +45,10 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 		lowInt, _ := IPToInt(low)
 		highInt, _ := IPToInt(high)
 
-		if lowInt.Cmp(highInt) != -1 {
-			return nil, nil, fmt.Errorf("%w : %s", ErrInvalidRange, "first IP must be smaller than second")
+		cmp := lowInt.Cmp(highInt)
+
+		if cmp > 0 {
+			return nil, nil, fmt.Errorf("%w : %s", ErrInvalidRange, "first IP must be smaller than second or equal to")
 		}
 
 		// low & high are valid!
@@ -71,7 +73,7 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 		return nil, nil, ErrIPv6NotSupported
 	}
 
-	// returns low, high, nil
+	// low, high, nil
 	return
 }
 

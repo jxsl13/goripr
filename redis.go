@@ -866,8 +866,6 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			upperBound,
 		}
 
-		//rdb.fetchBoundaries(cutBelow.IP)
-
 		boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
 		if err != nil {
 			return err

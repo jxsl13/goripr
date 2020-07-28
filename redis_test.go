@@ -255,7 +255,7 @@ func TestRedisClient_Insert(t *testing.T) {
 			for _, ipRange := range tt.args.ipRanges {
 
 				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
-					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
 				}
 
 				if !consistent(rdb, t) {
