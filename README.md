@@ -1,4 +1,6 @@
-# Efficient  IP range to string mapping using the Redis database
+# Go Redis IP Ranges (goripr)
+
+**goripr** is an eficient way to store ip ranges in a redis database and mapping those ranges to specific strings.
 
 This package wraps the widely used redis Go client and extends its feature set with a storage efficient mapping of IPv4 IP ranges to specific strings called reason.
 

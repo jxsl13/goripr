@@ -1,4 +1,4 @@
-module github.com/jxsl13/redis-ip-ranges
+module github.com/jxsl13/goripr
 
 go 1.13
 
