@@ -51,13 +51,13 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 	const UpperBound = 1
 
 	t.Logf("%d attributes fetched from database.", len(attributes))
-	for _, attr := range attributes {
-		t.Logf("\t\t%16s\tupper: %5t\tlower: %5t\t%20s", attr.IP.String(), attr.UpperBound, attr.LowerBound, attr.Reason)
+	for idx, attr := range attributes {
+		t.Logf("\tidx=%4d\t%16s\tupper: %5t\tlower: %5t\t%20s", idx, attr.IP.String(), attr.UpperBound, attr.LowerBound, attr.Reason)
 	}
 
 	cnt := 0
 	state := 0
-	for _, attr := range attributes {
+	for idx, attr := range attributes {
 
 		if attr.LowerBound && attr.UpperBound {
 			if state != UpperBound {
@@ -75,6 +75,13 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 			if state != LowerBound {
 				return false
 			}
+
+			// reasons consistent
+			if idx > 0 && attr.Reason != attributes[idx-1].Reason {
+				t.Errorf("reason mismatch: idx=%4d reason=%q idx=%4d reason=%q", idx-1, attributes[idx-1].Reason, idx, attr.Reason)
+				return false
+			}
+
 			cnt++
 			state = cnt % 2
 		}
