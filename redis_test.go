@@ -162,7 +162,7 @@ func generateRange() (ipRange string, insideIP string) {
 	hyphenRange := fmt.Sprintf("%s - %s", lowIP, highIP)
 
 	rand.Seed(time.Now().UnixNano())
-	mask := rand.Intn(32)
+	mask := rand.Intn(31) + 1
 
 	cidrRange := fmt.Sprintf("%s/%d", lowIP, mask)
 
