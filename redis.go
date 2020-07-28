@@ -150,64 +150,6 @@ func NewRedisClient(options RedisOptions) (*RedisClient, error) {
 
 }
 
-// InsertRangeUnsafe inserts the lower and upper bound of an IP range without doing any consistency checks
-func (rdb *RedisClient) InsertRangeUnsafe(ipRange, reason string) error {
-	low, high, err := Boundaries(ipRange)
-
-	if err != nil {
-		return err
-	}
-
-	lowInt, _ := IPToInt(low)
-	highInt, _ := IPToInt(high)
-
-	lowInt64 := lowInt.Int64()
-	highInt64 := highInt.Int64()
-
-	return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
-}
-
-// insertRangeIntUnsafe does not do any range checks, allowing for a little bit more performance
-func (rdb *RedisClient) insertRangeIntUnsafe(lowInt, highInt int64, reason string) error {
-	uuid := generateUUID()
-	lowMember, highMember := "", ""
-
-	if lowInt == highInt {
-		lowMember, highMember = uuid, uuid
-	} else {
-		lowMember, highMember = uuid, generateUUID()
-	}
-
-	tx := rdb.TxPipeline()
-
-	tx.ZAdd(IPRangesKey,
-		redis.Z{
-			Score:  float64(lowInt),
-			Member: lowMember,
-		},
-		redis.Z{
-			Score:  float64(highInt),
-			Member: highMember,
-		},
-	)
-
-	tx.HMSet(lowMember, map[string]interface{}{
-		"ip":     IntToIP(big.NewInt(lowInt), IPv4Bits).String(),
-		"low":    true,
-		"reason": reason,
-	})
-
-	tx.HMSet(highMember, map[string]interface{}{
-		"ip":     IntToIP(big.NewInt(highInt), IPv4Bits).String(),
-		"high":   true,
-		"reason": reason,
-	})
-
-	_, err := tx.Exec()
-
-	return err
-}
-
 // insertBoundaries does not do any range checks, allowing for a little bit more performance
 // Side effect: if boundary.ID == "" -> it gets a new UUID
 func (rdb *RedisClient) insertBoundaries(boundaries []*IPAttributes) error {
@@ -638,8 +580,6 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 				lowerBound,
 				upperBound,
 			}
-			// simply insert
-			//return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
 		}
 
 		// sets boundaries below and above out to be inserted range
@@ -904,8 +844,6 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			cutAbove,
 		}
 
-		//rdb.fetchBoundaries(cutAbove.IP)
-
 		boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
 		if err != nil {
 			return err
@@ -971,23 +909,6 @@ func (rdb *RedisClient) Remove(ipRange string) error {
 
 	// remove from sorted set and from attribute map
 	return rdb.removeIDs(boundaryIDs...)
-}
-
-// Inside returns all IP range boundaries that are within a given range
-func (rdb *RedisClient) Inside(ipRange string) (inside []*IPAttributes, err error) {
-	low, high, err := Boundaries(ipRange)
-
-	if err != nil {
-		return nil, err
-	}
-
-	lowInt, _ := IPToInt(low)
-	highInt, _ := IPToInt(high)
-
-	lowInt64 := lowInt.Int64()
-	highInt64 := highInt.Int64()
-
-	return rdb.insideIntRange(lowInt64, highInt64)
 }
 
 // insideIntIDs returns a list of range boundary IDs that lie within lowInt64 through highInt64.
@@ -1098,90 +1019,6 @@ func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
 	return
 }
 
-// Above returns the IP above the requested IP
-func (rdb *RedisClient) Above(requestedIP string) (ip *IPAttributes, err error) {
-	reqIP, _, err := Boundaries(requestedIP)
-
-	if err != nil {
-		return nil, err
-	}
-
-	bigIntIP, _ := IPToInt(reqIP)
-
-	tx := rdb.TxPipeline()
-
-	intIP := bigIntIP.Int64()
-
-	cmd := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    strconv.FormatInt(intIP, 10),
-		Max:    "+inf",
-		Offset: 0,
-		Count:  1,
-	})
-
-	_, err = tx.Exec()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	results, err := cmd.Result()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	if len(results) < 1 {
-		return nil, ErrNoResult
-	}
-
-	aboveResult := results[0]
-
-	return rdb.fetchIPAttributes(aboveResult)
-}
-
-// Below returns the range delimiting IP that is directly below the requestedIP
-func (rdb *RedisClient) Below(requestedIP string) (ip *IPAttributes, err error) {
-
-	reqIP, _, err := Boundaries(requestedIP)
-
-	if err != nil {
-		return nil, err
-	}
-
-	bigIntIP, _ := IPToInt(reqIP)
-
-	tx := rdb.TxPipeline()
-
-	intIP := bigIntIP.Int64()
-
-	cmd := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    "-inf",
-		Max:    strconv.FormatInt(intIP, 10),
-		Offset: 0,
-		Count:  1,
-	})
-
-	_, err = tx.Exec()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	results, err := cmd.Result()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	if len(results) < 1 {
-		return nil, ErrNoResult
-	}
-
-	belowResult := results[0]
-	return rdb.fetchIPAttributes(belowResult)
-}
-
 func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
 
 	tx := rdb.TxPipeline()
@@ -1232,22 +1069,6 @@ func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLowe
 	}
 
 	return
-}
-
-// Neighbours returns numNeighbours IPs that are above and numNeighbours IPs that are below the requestedIP
-func (rdb *RedisClient) Neighbours(requestedIP string, numNeighbours uint) (below, above []*IPAttributes, err error) {
-
-	reqIP, _, err := Boundaries(requestedIP)
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	bigIntIP, _ := IPToInt(reqIP)
-
-	intIP := bigIntIP.Int64()
-
-	return rdb.neighboursInt(intIP, numNeighbours)
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
@@ -1611,10 +1432,10 @@ func ipsOf(attributes []*IPAttributes) []net.IP {
 	return ids
 }
 
-// InAnyRange returns a non empty reason and nil for an error if the given IP is
+// Find returns a non empty reason and nil for an error if the given IP is
 // found within any previously inserted IP range.
-// An error is returned if the request fails and thus is false.
-func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
+// An error is returned if the request fails and thus should be treated as false.
+func (rdb *RedisClient) Find(ip string) (string, error) {
 	reqIP, _, err := Boundaries(ip)
 
 	if err != nil {
@@ -1645,54 +1466,4 @@ func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
 	}
 
 	return below.Reason, nil
-}
-
-// Tests whether the database is in a cosistent state.
-func consistentTest(rdb *RedisClient) bool {
-	attributes, err := rdb.insideInfRange()
-	if err != nil {
-		panic(err)
-	}
-
-	const LowerBound = 0
-	const UpperBound = 1
-
-	// t.Logf("%d attributes fetched from database.", len(attributes))
-	// for idx, attr := range attributes {
-	// 	t.Logf("\tidx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
-	// }
-
-	cnt := 0
-	state := 0
-	for idx, attr := range attributes {
-
-		if attr.LowerBound && attr.UpperBound {
-			if state != UpperBound {
-				return false
-			}
-
-			cnt += 2
-		} else if attr.LowerBound {
-			if state != UpperBound {
-				return false
-			}
-			cnt++
-			state = cnt % 2
-		} else if attr.UpperBound {
-			if state != LowerBound {
-				return false
-			}
-
-			// reasons consistent
-			if idx > 0 && attr.Reason != attributes[idx-1].Reason {
-				//t.Errorf("reason mismatch: idx=%4d reason=%q idx=%4d reason=%q", idx-1, attributes[idx-1].Reason, idx, attr.Reason)
-				return false
-			}
-
-			cnt++
-			state = cnt % 2
-		}
-	}
-
-	return state == LowerBound
 }
