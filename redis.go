@@ -280,7 +280,7 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 
 func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 
-	below, above, err := rdb.neighboursInt(singleInt, 2)
+	below, above, err := rdb.neighboursInt(singleInt, 4)
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 		hitBoundary := closestBelow
 
 		// remove the hit boundary
-		err := rdb.removeIDs([]string{hitBoundary.ID})
+		err := rdb.removeIDs(hitBoundary.ID)
 		if err != nil {
 			return err
 		}
@@ -325,9 +325,41 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 				LowerBound: true,
 			}
 
+			// default case
 			newRange := []*IPAttributes{
 				singleBoundary,
 				cutAbove,
+			}
+
+			boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutAbove := (*IPAttributes)(nil)
+			if len(boundaries) == 1 {
+				hitCutAbove = boundaries[0]
+			}
+
+			if hitCutAbove != nil {
+				// when we try to cut the range above, but hit the upper boundary
+				// the upper boundary becomes a single value range
+				if !hitCutAbove.UpperBound {
+					panic("Database inconsistent!")
+				}
+				// must be an upper boundary
+
+				// shrink range above to single value range
+				_, err := rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// remove cut, as there is no cutting of the range above
+				// needed anymore.
+				newRange = []*IPAttributes{
+					singleBoundary,
+				}
 			}
 
 			return rdb.insertBoundaries(newRange)
@@ -341,9 +373,42 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 				UpperBound: true,
 			}
 
+			boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutBelow := (*IPAttributes)(nil)
+			if len(boundaries) == 1 {
+				hitCutBelow = boundaries[0]
+			}
+
+			// default case
 			newRange := []*IPAttributes{
 				cutBelow,
 				singleBoundary,
+			}
+
+			// case in which the range only contains two values
+			if hitCutBelow != nil {
+				// when we try to cut the range below, but hit the lower boundary
+				// the lower boundary becomes a single value range
+				if !hitCutBelow.LowerBound {
+					panic("Database inconsistent!")
+				}
+				// must be an lower boundary
+
+				// shrink range above to single value range
+				_, err := rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// remove cut, as there is no cutting of the range above
+				// needed anymore.
+				newRange = []*IPAttributes{
+					singleBoundary,
+				}
 			}
 
 			return rdb.insertBoundaries(newRange)
@@ -364,11 +429,76 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 			LowerBound: true,
 		}
 
+		// default case
 		newRange := []*IPAttributes{
 			cutBelow,
 			singleBoundary,
 			cutAbove,
 		}
+
+		boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+		if err != nil {
+			return err
+		}
+
+		hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+		if len(boundaries) == 2 {
+			hitCutBelow = boundaries[0]
+			hitCutAbove = boundaries[1]
+
+			if hitCutBelow != nil && hitCutAbove != nil {
+				tx := rdb.TxPipeline()
+
+				// cutting above single value range
+				// lower bound gets high attribute
+				rdb.HSet(hitCutBelow.ID, "high", true)
+
+				// cutting below single value range
+				// upper bound gets low attribute
+				rdb.HSet(hitCutAbove.ID, "low", true)
+
+				_, err = tx.Exec()
+				if err != nil {
+					return err
+				}
+
+				// no cutting needed
+				newRange = []*IPAttributes{
+					singleBoundary,
+				}
+
+			} else if hitCutBelow != nil {
+				// only hitCutBelow
+
+				// boundary below becomes a single value range
+				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					singleBoundary,
+					cutAbove,
+				}
+
+			} else if hitCutAbove != nil {
+				// only hitCutAbove
+
+				// boundary above becomes a single value range
+				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					cutBelow,
+					singleBoundary,
+				}
+			}
+		}
+
 		return rdb.insertBoundaries(newRange)
 	}
 
@@ -438,11 +568,69 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			// our new range is within a bigger range
 			// len(inside) == 0 => outside range is connected
 
+			// default case
 			newRangeBoundaries := []*IPAttributes{
 				cutBelow,
 				lowerBound,
 				upperBound,
 				cutAbove,
+			}
+
+			boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+
+			if len(boundaries) == 2 {
+				hitCutBelow = boundaries[0]
+				hitCutAbove = boundaries[1]
+
+				if hitCutBelow != nil && hitCutAbove != nil {
+					// hit lower & upper boundary
+					tx := rdb.TxPipeline()
+					tx.HSet(hitCutBelow.ID, "high", true)
+					tx.HSet(hitCutAbove.ID, "low", true)
+
+					_, err = tx.Exec()
+					if err != nil {
+						return err
+					}
+
+					// hit both boundaries, insert only new range
+					newRangeBoundaries = []*IPAttributes{
+						lowerBound,
+						upperBound,
+					}
+
+				} else if hitCutBelow != nil {
+					// only hit lower boundary
+					_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+					if err != nil {
+						return err
+					}
+
+					// insert everything ecept lower boundary
+					newRangeBoundaries = []*IPAttributes{
+						lowerBound,
+						upperBound,
+						cutAbove,
+					}
+				} else if hitCutAbove != nil {
+					// only hit upper boundary
+					_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+					if err != nil {
+						return err
+					}
+
+					// insert everything ecept lower boundary
+					newRangeBoundaries = []*IPAttributes{
+						cutBelow,
+						lowerBound,
+						upperBound,
+					}
+				}
 			}
 
 			// sets boundaries below and above out to be inserted range
@@ -466,19 +654,29 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			// meaning they are smaller and can be replaced by the new bigger range
 
 			// delete all inside boundaries
-			err = rdb.removeIDs(idsOf(inside))
+			err = rdb.removeIDs(idsOf(inside)...)
 			if err != nil {
 				return err
 			}
 
 			// insert range
 			return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
+
+		} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
+			insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
+
+		} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
+
+		} else if insideMostRight.LowerBound && insideMostRight.IsSingleBoundary() {
+
+		} else {
+
 		}
 		// ranges lie outside on both sides, meaning:
 		// the mostLeft is an UpperBound, the mostRight is a lowerBound
 
 		// delete all inside boundaries
-		err = rdb.removeIDs(idsOf(inside))
+		err = rdb.removeIDs(idsOf(inside)...)
 
 		if err != nil {
 			return err
@@ -491,6 +689,8 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			cutAbove,
 		}
 
+		rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+
 		// insert lower cut, new range, upper cut boundary
 		return rdb.insertBoundaries(newRangeBoundaries)
 	}
@@ -499,7 +699,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 
 	// delete all boundaries inside
 	// of the new to be inserted range
-	err = rdb.removeIDs(idsOf(inside))
+	err = rdb.removeIDs(idsOf(inside)...)
 	if err != nil {
 		return err
 	}
@@ -516,6 +716,8 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			upperBound,
 		}
 
+		rdb.fetchBoundaries(cutBelow.IP)
+
 		return rdb.insertBoundaries(newRangeBoundaries)
 	}
 
@@ -527,6 +729,8 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 		upperBound,
 		cutAbove,
 	}
+
+	rdb.fetchBoundaries(cutAbove.IP)
 
 	return rdb.insertBoundaries(newRangeBoundaries)
 }
@@ -558,7 +762,7 @@ func (rdb *RedisClient) Remove(ipRange string) error {
 	}
 
 	// remove from sorted set and from attribute map
-	return rdb.removeIDs(boundaryIDs)
+	return rdb.removeIDs(boundaryIDs...)
 }
 
 // Inside returns all IP range boundaries that are within a given range
@@ -1059,7 +1263,95 @@ func (rdb *RedisClient) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttribute
 	return ipAttributes, nil
 }
 
-func (rdb *RedisClient) removeIDs(ids []string) error {
+func (rdb *RedisClient) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
+	intIPs := make([]int64, 0, len(ips))
+	for _, ip := range ips {
+		bInt, _ := IPToInt(ip)
+		intIPs = append(intIPs, bInt.Int64())
+	}
+
+	tx := rdb.Pipeline()
+
+	cmds := make([]*redis.StringSliceCmd, 0, len(ips))
+
+	for _, intIP := range intIPs {
+		cmd := tx.ZRangeByScore(IPRangesKey, redis.ZRangeBy{
+			Min: strconv.FormatInt(intIP, 10),
+			Max: strconv.FormatInt(intIP, 10),
+		})
+
+		cmds = append(cmds, cmd)
+	}
+
+	_, err := tx.Exec()
+	if err != nil {
+		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	result := make([]*IPAttributes, 0, len(ips))
+
+	for idx, cmd := range cmds {
+		boundaries, err := cmd.Result()
+		if err != nil {
+			return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		if len(boundaries) == 0 {
+			result = append(result, nil)
+		} else {
+			id := boundaries[0]
+
+			attr, err := rdb.HMGet(id, "reason", "low", "high").Result()
+			if err != nil {
+				return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+			}
+			if len(attr) < 3 {
+				result = append(result, nil)
+				continue
+			}
+
+			reason := ""
+			switch t := attr[0].(type) {
+			case string:
+				reason = t
+			}
+
+			low := false
+			switch t := attr[1].(type) {
+			case string:
+				low = t != "0"
+			case bool:
+				low = t
+			}
+
+			high := false
+			switch t := attr[2].(type) {
+			case string:
+				high = t != "0"
+			case bool:
+				high = t
+			}
+
+			if low == false && low == high {
+				result = append(result, nil)
+				continue
+			}
+
+			resultAttr := &IPAttributes{
+				ID:         id,
+				IP:         ips[idx],
+				Reason:     reason,
+				LowerBound: low,
+				UpperBound: high,
+			}
+			result = append(result, resultAttr)
+		}
+	}
+
+	return result, nil
+}
+
+func (rdb *RedisClient) removeIDs(ids ...string) error {
 	tx := rdb.TxPipeline()
 
 	// remove from sorted set
@@ -1088,6 +1380,25 @@ func idsOf(attributes []*IPAttributes) []string {
 		if attr.ID != "" {
 			ids = append(ids, attr.ID)
 		}
+	}
+	return ids
+}
+
+// removes dubplicates that are next to each other.
+func ipsOf(attributes []*IPAttributes) []net.IP {
+	ids := make([]net.IP, 0, len(attributes))
+
+	for idx, attr := range attributes {
+		// attributes are sorted
+		if idx > 0 && len(attr.ID) > 0 && attr.EqualIP(attributes[idx-1]) {
+			// skip continuous duplicates
+			continue
+		}
+
+		if attr.IP != nil {
+			ids = append(ids, attr.IP)
+		}
+
 	}
 	return ids
 }
