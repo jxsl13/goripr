@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -15,6 +16,7 @@ type rangeReason struct {
 
 var (
 	ranges = []rangeReason{
+		{"120.2.2.2/1", "zero"},
 		{"200.0.0.0 - 230.0.0.0", "first"},
 		{"210.0.0.0 - 220.0.0.0", "second"},
 		{"190.0.0.0 - 205.0.0.0", "third"},
@@ -138,10 +140,16 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 // and and returns a random IP that is within the range
 func generateRange() (ipRange string, insideIP string) {
 
+	const minIP = 16777216
+	const maxIP = 4294967295
+
+	const randBorder = maxIP - minIP
+
 	rand.Seed(time.Now().UnixNano())
-	low := int64(rand.Int31())
+	low := minIP + rand.Int63n(randBorder)
+
 	rand.Seed(time.Now().UnixNano())
-	high := int64(rand.Int31())
+	high := minIP + rand.Int63n(randBorder)
 
 	if low > high {
 		low, high = high, low
@@ -154,8 +162,14 @@ func generateRange() (ipRange string, insideIP string) {
 		between = rand.Int63n(high - low)
 	}
 
-	lowIP := IntToIP(big.NewInt(low), IPv4Bits).String()
-	highIP := IntToIP(big.NewInt(high), IPv4Bits).String()
+	lowIP := IntToIP(big.NewInt(low), IPv4Bits).To4().String()
+	highIP := IntToIP(big.NewInt(high), IPv4Bits).To4().String()
+
+	testregex := regexp.MustCompile(`[.:0-9]+`)
+
+	if !(testregex.MatchString(lowIP) && testregex.MatchString(highIP)) {
+		panic(fmt.Errorf("invalid ip generatred: low: %q high: %q", lowIP, highIP))
+	}
 
 	betweenIP := IntToIP(big.NewInt(between), IPv4Bits).String()
 
@@ -208,16 +222,14 @@ func initRDB(db int) *RedisClient {
 }
 
 func shuffle(seed int64, a []rangeReason) []rangeReason {
-	var b []rangeReason
-	copy(b, a)
 	rand.Seed(seed)
-	rand.Shuffle(len(b), func(i, j int) { b[i], b[j] = b[j], b[i] })
-	return b
+	rand.Shuffle(len(a), func(i, j int) { a[i], a[j] = a[j], a[i] })
+	return a
 }
 
 func initRanges() {
 	// generate ranges
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		ipRange, _ := generateRange()
 		ranges = append(ranges, rangeReason{
 			Range:  ipRange,
@@ -232,16 +244,20 @@ func TestRedisClient_Insert(t *testing.T) {
 
 	// initial test
 	tests := []testCase{
-		{"simple insert all", args{ranges[:]}, false},
+		{"simple insert all", args{ranges}, false},
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		seed := time.Now().UnixNano()
-		rand.Seed(seed)
+
+		var shuffledRange []rangeReason
+		copy(shuffledRange, ranges)
+		shuffle(seed, shuffledRange)
+
 		tests = append(tests, testCase{
 			fmt.Sprintf("shuffle %d, seed=%q", i, seed),
-			args{shuffle(seed, ranges[:])},
+			args{shuffledRange},
 			false,
 		})
 	}
