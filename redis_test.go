@@ -1,7 +1,8 @@
 package main
 
 import (
-	"log"
+	"fmt"
+	"math/big"
 	"math/rand"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ type rangeReason struct {
 }
 
 var (
-	ranges = [...]rangeReason{
+	ranges = []rangeReason{
 		{"200.0.0.0 - 230.0.0.0", "first"},
 		{"210.0.0.0 - 220.0.0.0", "second"},
 		{"190.0.0.0 - 205.0.0.0", "third"},
@@ -38,9 +39,40 @@ var (
 		{"188.0.0.0", "23rd"},
 		{"123.0.0.0 - 123.0.0.2", "24th"},
 		{"123.0.0.1", "25th"},
+		{"123.0.0.2", "26th"},
+		{"123.0.0.3", "27th"},
+		{"123.0.0.4", "28th"},
+		{"123.0.0.5", "29th"},
+		{"123.0.0.6", "30th"},
+		{"123.0.0.7", "31st"},
+		{"123.0.0.8", "32nd"},
+		{"123.0.0.1 - 123.0.0.2", "33rd"},
+		{"123.0.0.1 - 123.0.0.3", "34th"},
+		{"123.0.0.1 - 123.0.0.4", "35th"},
+		{"123.0.0.1 - 123.0.0.5", "36th"},
+		{"123.0.0.1 - 123.0.0.6", "37th"},
+		{"123.0.0.1 - 123.0.0.7", "38th"},
+		{"123.0.0.1 - 123.0.0.8", "39th"},
+		{"123.0.0.1 - 123.0.0.9", "40th"},
+		{"123.0.0.1 - 123.0.0.10", "41st"},
+		{"123.0.0.2 - 123.0.0.10", "42nd"},
+		{"123.0.0.3 - 123.0.0.10", "43rd"},
+		{"123.0.0.4 - 123.0.0.10", "44th"},
+		{"123.0.0.5 - 123.0.0.10", "45th"},
 	}
 )
 
+type args struct {
+	ipRanges []rangeReason
+}
+
+type testCase struct {
+	name    string
+	args    args
+	wantErr bool
+}
+
+// Tests whether the database is in a cosistent state.
 func consistent(rdb *RedisClient, t *testing.T) bool {
 	attributes, err := rdb.insideInfRange()
 	if err != nil {
@@ -90,17 +122,62 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 	return state == LowerBound
 }
 
-func initRDB() *RedisClient {
+// generateRange generates a valid IP range
+// and and returns a random IP that is within the range
+func generateRange() (ipRange string, insideIP string) {
+
+	rand.Seed(time.Now().UnixNano())
+	low := int64(rand.Int31())
+	rand.Seed(time.Now().UnixNano())
+	high := int64(rand.Int31())
+
+	if low > high {
+		low, high = high, low
+	}
+
+	rand.Seed(time.Now().UnixNano())
+
+	between := low
+	if high-low > 0 {
+		between = rand.Int63n(high - low)
+	}
+
+	lowIP := IntToIP(big.NewInt(low), IPv4Bits).String()
+	highIP := IntToIP(big.NewInt(high), IPv4Bits).String()
+
+	betweenIP := IntToIP(big.NewInt(between), IPv4Bits).String()
+
+	hyphenRange := fmt.Sprintf("%s - %s", lowIP, highIP)
+
+	rand.Seed(time.Now().UnixNano())
+	mask := rand.Intn(32)
+
+	cidrRange := fmt.Sprintf("%s/%d", lowIP, mask)
+
+	rand.Seed(time.Now().UnixNano())
+
+	if rand.Int()%2 == 0 {
+		return hyphenRange, betweenIP
+	}
+
+	return cidrRange, betweenIP
+
+}
+
+func initRDB(db int) *RedisClient {
+	if db > 15 {
+		panic("redis only supports database indices from 0 through 15.")
+	}
 	rdb, err := NewRedisClient(RedisOptions{
 		Addr:     "localhost:6379",
 		Password: "",
-		DB:       0,
+		DB:       db,
 	})
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = rdb.FlushAll().Result()
+	_, err = rdb.FlushDB().Result()
 	if err != nil {
 		panic(err)
 	}
@@ -110,7 +187,7 @@ func initRDB() *RedisClient {
 	rdb, err = NewRedisClient(RedisOptions{
 		Addr:     "localhost:6379",
 		Password: "",
-		DB:       0,
+		DB:       db,
 	})
 	if err != nil {
 		panic(err)
@@ -118,44 +195,49 @@ func initRDB() *RedisClient {
 	return rdb
 }
 
-func shuffle(a []rangeReason) []rangeReason {
+func shuffle(seed int64, a []rangeReason) []rangeReason {
 	var b []rangeReason
 	copy(b, a)
-
-	seed := time.Now().UnixNano()
-	log.Println("seed =", seed)
 	rand.Seed(seed)
 	rand.Shuffle(len(b), func(i, j int) { b[i], b[j] = b[j], b[i] })
 	return b
 }
 
+func initRanges() {
+	// generate ranges
+	for i := 0; i < 1000; i++ {
+		ipRange, _ := generateRange()
+		ranges = append(ranges, rangeReason{
+			Range:  ipRange,
+			Reason: fmt.Sprintf("random %5d", i),
+		})
+	}
+}
+
 func TestRedisClient_Insert(t *testing.T) {
+	// generate random ranges
+	initRanges()
 
-	rdb := initRDB()
-	defer rdb.Close()
-
-	type args struct {
-		ipRanges []rangeReason
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
+	// initial test
+	tests := []testCase{
 		{"simple insert all", args{ranges[:]}, false},
-		{"shuffle 1", args{shuffle(ranges[:])}, false},
-		{"shuffle 2", args{shuffle(ranges[:])}, false},
-		{"shuffle 3", args{shuffle(ranges[:])}, false},
-		{"shuffle 4", args{shuffle(ranges[:])}, false},
-		{"shuffle 5", args{shuffle(ranges[:])}, false},
-		{"shuffle 7", args{shuffle(ranges[:])}, false},
-		{"shuffle 8", args{shuffle(ranges[:])}, false},
-		{"shuffle 9", args{shuffle(ranges[:])}, false},
-		{"shuffle 10", args{shuffle(ranges[:])}, false},
 	}
-	for _, tt := range tests {
 
+	// shuffle initial test to generate new tests
+	for i := 0; i < 1000; i++ {
+		seed := time.Now().UnixNano()
+		rand.Seed(seed)
+		tests = append(tests, testCase{
+			fmt.Sprintf("shuffle %d, seed=%q", i, seed),
+			args{shuffle(seed, ranges[:])},
+			false,
+		})
+	}
+
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			rdb := initRDB(0)
+			defer rdb.Close()
 
 			// consistency after every insert
 			for _, ipRange := range tt.args.ipRanges {
@@ -170,7 +252,7 @@ func TestRedisClient_Insert(t *testing.T) {
 					t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
 				}
 			}
-			rdb.FlushAll().Result()
+			rdb.FlushDB().Result()
 		})
 	}
 }
