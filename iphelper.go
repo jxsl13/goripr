@@ -82,8 +82,13 @@ func AddressRange(network *net.IPNet) (net.IP, net.IP) {
 	// the first IP is easy
 	firstIP := network.IP
 
+	if firstIP = firstIP.To4(); firstIP == nil {
+		return nil, nil
+	}
+
 	// the last IP is the network address OR NOT the mask address
 	prefixLen, bits := network.Mask.Size()
+
 	if prefixLen == bits {
 		// Easy!
 		// But make sure that our two slices are distinct, since they
@@ -94,13 +99,20 @@ func AddressRange(network *net.IPNet) (net.IP, net.IP) {
 	}
 
 	firstIPInt, bits := IPToInt(firstIP)
+
+	if bits == IPv6Bits {
+		bits = IPv4Bits
+	}
+
 	hostLen := uint(bits) - uint(prefixLen)
 	lastIPInt := big.NewInt(1)
 	lastIPInt.Lsh(lastIPInt, hostLen)
 	lastIPInt.Sub(lastIPInt, big.NewInt(1))
 	lastIPInt.Or(lastIPInt, firstIPInt)
 
-	return firstIP, IntToIP(lastIPInt, bits)
+	lastIP := IntToIP(lastIPInt, IPv4Bits)
+
+	return firstIP, lastIP
 }
 
 // IPToInt returns the IP as bigInt as well as the number of occupied
