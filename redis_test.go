@@ -87,10 +87,14 @@ type testCase struct {
 }
 
 // Tests whether the database is in a cosistent state.
-func consistent(rdb *RedisClient, t *testing.T) bool {
+func consistent(rdb *RedisClient, t *testing.T, iteration int) bool {
 	attributes, err := rdb.insideInfRange()
 	if err != nil {
 		panic(err)
+	}
+
+	if iteration > 0 && len(attributes) == 0 {
+		panic("databse empty")
 	}
 
 	const LowerBound = 0
@@ -262,7 +266,7 @@ func TestRedisClient_Insert(t *testing.T) {
 		})
 	}
 
-	for _, tt := range tests {
+	for idx, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rdb := initRDB(0)
 			defer rdb.Close()
@@ -274,7 +278,7 @@ func TestRedisClient_Insert(t *testing.T) {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
 				}
 
-				if !consistent(rdb, t) {
+				if !consistent(rdb, t, idx) {
 					t.Fatalf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
 				} else {
 					t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
