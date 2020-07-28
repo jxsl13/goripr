@@ -52,7 +52,7 @@ func consistent(rdb *RedisClient, t *testing.T) bool {
 
 	t.Logf("%d attributes fetched from database.", len(attributes))
 	for idx, attr := range attributes {
-		t.Logf("\tidx=%4d\t%16s\tupper: %5t\tlower: %5t\t%20s", idx, attr.IP.String(), attr.UpperBound, attr.LowerBound, attr.Reason)
+		t.Logf("\tidx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
 	}
 
 	cnt := 0
