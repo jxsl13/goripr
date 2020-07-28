@@ -136,6 +136,8 @@ func IPToInt(ip net.IP) (*big.Int, int) {
 	// if statements in ascending length order
 	if occupiedBytes == net.IPv4len+2 && len(ip) == net.IPv6len && ip[10] == 255 && ip[11] == 255 {
 		return val, IPv4Bits
+	} else if occupiedBytes <= net.IPv4len {
+		return val, IPv4Bits
 	} else if occupiedBytes <= net.IPv6len {
 		return val, IPv6Bits
 	} else {
