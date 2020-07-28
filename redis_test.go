@@ -162,7 +162,7 @@ func generateRange() (ipRange string, insideIP string) {
 	hyphenRange := fmt.Sprintf("%s - %s", lowIP, highIP)
 
 	rand.Seed(time.Now().UnixNano())
-	mask := rand.Intn(31) + 1
+	mask := rand.Intn(32-1) + 1
 
 	cidrRange := fmt.Sprintf("%s/%d", lowIP, mask)
 
@@ -217,7 +217,7 @@ func shuffle(seed int64, a []rangeReason) []rangeReason {
 
 func initRanges() {
 	// generate ranges
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		ipRange, _ := generateRange()
 		ranges = append(ranges, rangeReason{
 			Range:  ipRange,
@@ -236,7 +236,7 @@ func TestRedisClient_Insert(t *testing.T) {
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		seed := time.Now().UnixNano()
 		rand.Seed(seed)
 		tests = append(tests, testCase{
