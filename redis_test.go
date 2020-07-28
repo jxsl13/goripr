@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/go-redis/redis"
 )
 
 type rangeReason struct {
@@ -87,7 +89,7 @@ type testCase struct {
 }
 
 // Tests whether the database is in a cosistent state.
-func consistent(rdb *RedisClient, t *testing.T, iteration int) bool {
+func consistent(rdb *Client, t *testing.T, iteration int) bool {
 	attributes, err := rdb.insideInfRange()
 	if err != nil {
 		panic(err)
@@ -194,11 +196,11 @@ func generateRange() (ipRange string, insideIP string) {
 
 }
 
-func initRDB(db int) *RedisClient {
+func initRDB(db int) *Client {
 	if db > 15 {
 		panic("redis only supports database indices from 0 through 15.")
 	}
-	rdb, err := NewRedisClient(RedisOptions{
+	rdb, err := NewClient(Options{
 		Addr:     "localhost:6379",
 		Password: "",
 		DB:       db,
@@ -214,7 +216,7 @@ func initRDB(db int) *RedisClient {
 
 	rdb.Close()
 
-	rdb, err = NewRedisClient(RedisOptions{
+	rdb, err = NewClient(Options{
 		Addr:     "localhost:6379",
 		Password: "",
 		DB:       db,
@@ -242,7 +244,7 @@ func initRanges(num int) {
 	}
 }
 
-func TestRedisClient_Insert(t *testing.T) {
+func TestClient_Insert(t *testing.T) {
 	// generate random ranges
 	initRanges(1000)
 
@@ -285,6 +287,50 @@ func TestRedisClient_Insert(t *testing.T) {
 				}
 			}
 			rdb.FlushDB().Result()
+		})
+	}
+}
+
+func initRangesAndIPsWithin(num int) {
+	// generate ranges
+	for i := 0; i < num; i++ {
+		ipRange, _ := generateRange()
+		ranges = append(ranges, rangeReason{
+			Range:  ipRange,
+			Reason: fmt.Sprintf("random %5d", i),
+		})
+	}
+}
+
+func TestClient_Find(t *testing.T) {
+	type fields struct {
+		Client *redis.Client
+	}
+	type args struct {
+		ip string
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    string
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rdb := &Client{
+				Client: tt.fields.Client,
+			}
+			got, err := rdb.Find(tt.args.ip)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Client.Find() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("Client.Find() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

@@ -14,13 +14,13 @@ import (
 	"github.com/go-redis/redis"
 )
 
-// RedisClient is an extended version of the redis.Client
-type RedisClient struct {
+// Client is an extended version of the redis.Client
+type Client struct {
 	*redis.Client
 }
 
-// RedisOptions configures the redis database connection
-type RedisOptions struct {
+// Options configures the redis database connection
+type Options struct {
 	// The network type, either tcp or unix.
 	// Default is tcp.
 	Network string
@@ -89,8 +89,8 @@ type RedisOptions struct {
 	TLSConfig *tls.Config
 }
 
-// NewRedisClient creates a new redi client connection
-func NewRedisClient(options RedisOptions) (*RedisClient, error) {
+// NewClient creates a new redi client connection
+func NewClient(options Options) (*Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Network:            options.Network,
 		Addr:               options.Addr,
@@ -146,13 +146,13 @@ func NewRedisClient(options RedisOptions) (*RedisClient, error) {
 	}
 
 	// type cast
-	return &RedisClient{rdb}, nil
+	return &Client{rdb}, nil
 
 }
 
 // insertBoundaries does not do any range checks, allowing for a little bit more performance
 // Side effect: if boundary.ID == "" -> it gets a new UUID
-func (rdb *RedisClient) insertBoundaries(boundaries []*IPAttributes) error {
+func (rdb *Client) insertBoundaries(boundaries []*IPAttributes) error {
 
 	tx := rdb.TxPipeline()
 	// fill transaction
@@ -201,7 +201,7 @@ func (rdb *RedisClient) insertBoundaries(boundaries []*IPAttributes) error {
 // Insert safely inserts a new range into the database.
 // Bigger ranges are sliced into smaller ranges if the Reason strings differ.
 // If the reason strings are equal, ranges are expanded as expected.
-func (rdb *RedisClient) Insert(ipRange, reason string) error {
+func (rdb *Client) Insert(ipRange, reason string) error {
 	low, high, err := Boundaries(ipRange)
 
 	if err != nil {
@@ -222,7 +222,7 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 	return rdb.insertRangeInt(lowInt64, highInt64, reason)
 }
 
-func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
+func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 
 	below, above, err := rdb.neighboursInt(singleInt, 1)
 	if err != nil {
@@ -452,7 +452,7 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 }
 
 // insertRangeInt properly inserts new ranges into the database, removing other ranges, cutting them, shrinking them, etc.
-func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string) error {
+func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error {
 
 	inside, err := rdb.insideIntRange(lowInt64, highInt64)
 	if err != nil {
@@ -874,7 +874,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 }
 
 // Remove removes a range from the set
-func (rdb *RedisClient) Remove(ipRange string) error {
+func (rdb *Client) Remove(ipRange string) error {
 	low, high, err := Boundaries(ipRange)
 
 	if err != nil {
@@ -913,7 +913,7 @@ func (rdb *RedisClient) Remove(ipRange string) error {
 
 // insideIntIDs returns a list of range boundary IDs that lie within lowInt64 through highInt64.
 // including these two boundaries.
-func (rdb *RedisClient) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
+func (rdb *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
 	tx := rdb.TxPipeline()
 
 	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
@@ -950,7 +950,7 @@ func (rdb *RedisClient) insideIntIDs(lowInt64, highInt64 int64) ([]string, error
 }
 
 // insideIntRange does not do any checks or ip conversions to be reusable
-func (rdb *RedisClient) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttributes, err error) {
+func (rdb *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttributes, err error) {
 	inside = make([]*IPAttributes, 0, 3)
 
 	tx := rdb.TxPipeline()
@@ -985,7 +985,7 @@ func (rdb *RedisClient) insideIntRange(lowInt64, highInt64 int64) (inside []*IPA
 }
 
 // insideInfRange returns all ranges
-func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
+func (rdb *Client) insideInfRange() (inside []*IPAttributes, err error) {
 	inside = make([]*IPAttributes, 0, 3)
 
 	tx := rdb.TxPipeline()
@@ -1019,7 +1019,7 @@ func (rdb *RedisClient) insideInfRange() (inside []*IPAttributes, err error) {
 	return
 }
 
-func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
+func (rdb *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
 
 	tx := rdb.TxPipeline()
 
@@ -1072,7 +1072,7 @@ func (rdb *RedisClient) belowLowerAboveUpper(lower, upper, num int64) (belowLowe
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
-func (rdb *RedisClient) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*IPAttributes, err error) {
+func (rdb *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*IPAttributes, err error) {
 
 	below = make([]*IPAttributes, 0, numNeighbours)
 	above = make([]*IPAttributes, 0, numNeighbours)
@@ -1139,7 +1139,7 @@ func (rdb *RedisClient) neighboursInt(ofIP int64, numNeighbours uint) (below, ab
 
 // fetchIpAttributes gets the remaining IP related attributes that belong to the IP range boundary
 // that is encoded in the redis.Z.Score attribute
-func (rdb *RedisClient) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
+func (rdb *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 
 	switch result.Score {
 	case math.Inf(-1):
@@ -1212,7 +1212,7 @@ func (rdb *RedisClient) fetchIPAttributes(result redis.Z) (*IPAttributes, error)
 }
 
 // fetch a list of IPAttributes passed as result parameters
-func (rdb *RedisClient) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, error) {
+func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, error) {
 
 	ipAttributes := make([]*IPAttributes, 0, len(results))
 
@@ -1292,7 +1292,7 @@ func (rdb *RedisClient) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttribute
 	return ipAttributes, nil
 }
 
-func (rdb *RedisClient) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
+func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 	intIPs := make([]int64, 0, len(ips))
 	for _, ip := range ips {
 		bInt, _ := IPToInt(ip)
@@ -1380,7 +1380,7 @@ func (rdb *RedisClient) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) 
 	return result, nil
 }
 
-func (rdb *RedisClient) removeIDs(ids ...string) error {
+func (rdb *Client) removeIDs(ids ...string) error {
 	tx := rdb.TxPipeline()
 
 	// remove from sorted set
@@ -1435,7 +1435,7 @@ func ipsOf(attributes []*IPAttributes) []net.IP {
 // Find returns a non empty reason and nil for an error if the given IP is
 // found within any previously inserted IP range.
 // An error is returned if the request fails and thus should be treated as false.
-func (rdb *RedisClient) Find(ip string) (string, error) {
+func (rdb *Client) Find(ip string) (string, error) {
 	reqIP, _, err := Boundaries(ip)
 
 	if err != nil {
@@ -1463,6 +1463,10 @@ func (rdb *RedisClient) Find(ip string) (string, error) {
 
 	if !inRange {
 		return "", ErrIPNotFoundInAnyRange
+	}
+
+	if below.Reason == DeleteReason {
+		return "", ErrNoResult
 	}
 
 	return below.Reason, nil
