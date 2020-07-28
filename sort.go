@@ -1,4 +1,4 @@
-package main
+package goripr
 
 import "github.com/go-redis/redis"
 
