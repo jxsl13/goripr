@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"testing"
 	"time"
-
-	"github.com/go-redis/redis"
 )
 
 type rangeReason struct {
@@ -78,14 +76,10 @@ var (
 	}
 )
 
-type args struct {
-	ipRanges []rangeReason
-}
-
 type testCase struct {
-	name    string
-	args    args
-	wantErr bool
+	name     string
+	ipRanges []rangeReason
+	wantErr  bool
 }
 
 // Tests whether the database is in a cosistent state.
@@ -246,24 +240,24 @@ func initRanges(num int) {
 
 func TestClient_Insert(t *testing.T) {
 	// generate random ranges
-	initRanges(1000)
+	initRanges(100)
 
 	// initial test
 	tests := []testCase{
-		{"simple insert all", args{ranges}, false},
+		{"simple insert all", ranges, false},
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 100; i++ {
 		seed := time.Now().UnixNano()
 
-		var shuffledRange []rangeReason
+		shuffledRange := make([]rangeReason, len(ranges))
 		copy(shuffledRange, ranges)
 		shuffle(seed, shuffledRange)
 
 		tests = append(tests, testCase{
-			fmt.Sprintf("shuffle %d, seed=%q", i, seed),
-			args{shuffledRange},
+			fmt.Sprintf("shuffle %d, seed=%d", i, seed),
+			shuffledRange,
 			false,
 		})
 	}
@@ -274,7 +268,7 @@ func TestClient_Insert(t *testing.T) {
 			defer rdb.Close()
 
 			// consistency after every insert
-			for _, ipRange := range tt.args.ipRanges {
+			for _, ipRange := range tt.ipRanges {
 
 				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
@@ -286,50 +280,105 @@ func TestClient_Insert(t *testing.T) {
 					t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
 				}
 			}
-			rdb.FlushDB().Result()
+			_, err := rdb.FlushDB().Result()
+			if err != nil {
+				panic("failed to flush db")
+			}
 		})
 	}
 }
 
+type rangeIPReason struct {
+	Range  string
+	IP     string
+	Reason string
+}
+
+type testCaseFind struct {
+	name     string
+	ipRanges []rangeIPReason
+	wantErr  bool
+}
+
+var (
+	findRanges = []rangeIPReason{}
+)
+
 func initRangesAndIPsWithin(num int) {
 	// generate ranges
 	for i := 0; i < num; i++ {
-		ipRange, _ := generateRange()
-		ranges = append(ranges, rangeReason{
+		ipRange, ip := generateRange()
+		findRanges = append(findRanges, rangeIPReason{
 			Range:  ipRange,
+			IP:     ip,
 			Reason: fmt.Sprintf("random %5d", i),
 		})
 	}
 }
 
+func shuffleFindTest(seed int64, a []rangeIPReason) []rangeIPReason {
+	rand.Seed(seed)
+	rand.Shuffle(len(a), func(i, j int) { a[i], a[j] = a[j], a[i] })
+	return a
+}
+
+func initTestCasesFind(num int) (testCases []testCaseFind) {
+
+	initRangesAndIPsWithin(100)
+
+	testCases = make([]testCaseFind, 0, num)
+
+	for i := 0; i < num; i++ {
+
+		seed := time.Now().UnixNano()
+
+		shuffledRange := make([]rangeIPReason, len(findRanges))
+		copy(shuffledRange, findRanges)
+		shuffleFindTest(seed, shuffledRange)
+
+		testCases[i] = testCaseFind{
+			name:     fmt.Sprintf("random est case find %5d", i),
+			ipRanges: shuffledRange,
+			wantErr:  false,
+		}
+	}
+	return
+}
+
 func TestClient_Find(t *testing.T) {
-	type fields struct {
-		Client *redis.Client
-	}
-	type args struct {
-		ip string
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    string
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
+
+	tests := initTestCasesFind(100)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rdb := &Client{
-				Client: tt.fields.Client,
-			}
-			got, err := rdb.Find(tt.args.ip)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.Find() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("Client.Find() = %v, want %v", got, tt.want)
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			for _, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Fatalf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+				}
+
+				got, err := rdb.Find(ipToFind)
+
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("rdb.Find() error = %v, wantErr %v", err, tt.wantErr)
+				}
+
+				if got != reasonToFind {
+					t.Fatalf("rdb.Find() = %q, want %q", got, reasonToFind)
+				}
+
+				_, err = rdb.FlushDB().Result()
+				if err != nil {
+					panic("failed to flush db")
+				}
+
 			}
 		})
 	}
