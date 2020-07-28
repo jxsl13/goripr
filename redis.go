@@ -272,10 +272,12 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
 
-	if lowInt64 != highInt64 {
-		return rdb.insertRangeInt(lowInt64, highInt64, reason)
+	if lowInt64 == highInt64 {
+		// edge case, range is single value
+		return rdb.insertSingleInt(lowInt64, reason)
 	}
-	return rdb.insertSingleInt(lowInt64, reason)
+
+	return rdb.insertRangeInt(lowInt64, highInt64, reason)
 }
 
 func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
@@ -491,7 +493,7 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 				return err
 			}
 
-			// only cutting above needed
+			// only cutting below needed
 			newRange = []*IPAttributes{
 				cutBelow,
 				singleBoundary,
@@ -553,22 +555,15 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 	if lenInside == 0 {
 		// nothin inside range
 
-		if belowLowerClosest.UpperBound &&
-			aboveUpperClosest.LowerBound {
-			// case 1: set empty, infinite boundaries guarantee
-			// the existence of at least one neighbour to each side
-			// case 2: inserting into empty space in between other ranges
-			// belowLowerClosest != aboveUpperClosest, because len(inside) == 0
-			// case 3: -inf below & other range above OR other range below & +inf above
-			return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
+		newRangeBoundaries := []*IPAttributes{}
 
-		} else if belowLowerClosest.LowerBound && aboveUpperClosest.UpperBound &&
+		if belowLowerClosest.LowerBound && aboveUpperClosest.UpperBound &&
 			belowLowerClosest.IsSingleBoundary() && aboveUpperClosest.IsSingleBoundary() {
 			// our new range is within a bigger range
 			// len(inside) == 0 => outside range is connected
 
 			// default case
-			newRangeBoundaries := []*IPAttributes{
+			newRangeBoundaries = []*IPAttributes{
 				cutBelow,
 				lowerBound,
 				upperBound,
@@ -583,61 +578,72 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
 
 			if len(boundaries) == 2 {
-				hitCutBelow = boundaries[0]
-				hitCutAbove = boundaries[1]
+				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
+			}
 
-				if hitCutBelow != nil && hitCutAbove != nil {
-					// hit lower & upper boundary
-					tx := rdb.TxPipeline()
-					tx.HSet(hitCutBelow.ID, "high", true)
-					tx.HSet(hitCutAbove.ID, "low", true)
+			if hitCutBelow != nil && hitCutAbove != nil {
+				// hit lower & upper boundary
+				tx := rdb.TxPipeline()
+				tx.HSet(hitCutBelow.ID, "high", true)
+				tx.HSet(hitCutAbove.ID, "low", true)
 
-					_, err = tx.Exec()
-					if err != nil {
-						return err
-					}
+				_, err = tx.Exec()
+				if err != nil {
+					return err
+				}
 
-					// hit both boundaries, insert only new range
-					newRangeBoundaries = []*IPAttributes{
-						lowerBound,
-						upperBound,
-					}
+				// hit both boundaries, insert only new range
+				newRangeBoundaries = []*IPAttributes{
+					lowerBound,
+					upperBound,
+				}
 
-				} else if hitCutBelow != nil {
-					// only hit lower boundary
-					_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
-					if err != nil {
-						return err
-					}
+			} else if hitCutBelow != nil {
+				// only hit lower boundary
+				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				if err != nil {
+					return err
+				}
 
-					// insert everything ecept lower boundary
-					newRangeBoundaries = []*IPAttributes{
-						lowerBound,
-						upperBound,
-						cutAbove,
-					}
-				} else if hitCutAbove != nil {
-					// only hit upper boundary
-					_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
-					if err != nil {
-						return err
-					}
+				// insert everything except lower cut
+				newRangeBoundaries = []*IPAttributes{
+					lowerBound,
+					upperBound,
+					cutAbove,
+				}
+			} else if hitCutAbove != nil {
+				// only hit upper boundary
+				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				if err != nil {
+					return err
+				}
 
-					// insert everything ecept lower boundary
-					newRangeBoundaries = []*IPAttributes{
-						cutBelow,
-						lowerBound,
-						upperBound,
-					}
+				// insert everything except upper cut
+				newRangeBoundaries = []*IPAttributes{
+					cutBelow,
+					lowerBound,
+					upperBound,
 				}
 			}
 
-			// sets boundaries below and above out to be inserted range
-			return rdb.insertBoundaries(newRangeBoundaries)
 		} else {
-			panic("what is this case")
+			//belowLowerClosest.UpperBound && aboveUpperClosest.LowerBound {
+			// case 1: set empty, infinite boundaries guarantee
+			// the existence of at least one neighbour to each side
+			// case 2: inserting into empty space in between other ranges
+			// belowLowerClosest != aboveUpperClosest, because len(inside) == 0
+			// case 3: -inf below & other range above OR other range below & +inf above
+
+			newRangeBoundaries = []*IPAttributes{
+				lowerBound,
+				upperBound,
+			}
+			// simply insert
+			//return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
 		}
 
+		// sets boundaries below and above out to be inserted range
+		return rdb.insertBoundaries(newRangeBoundaries)
 	}
 
 	// lenInside > 0
@@ -727,7 +733,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 					return err
 				}
 
-				// only cutting above needed
+				// only cutting below needed
 				newRange = []*IPAttributes{
 					cutBelow,
 					lowerBound,
@@ -766,7 +772,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 					return err
 				}
 
-				// only cutting above needed
+				// no cutting needed
 				newRange = []*IPAttributes{
 					lowerBound,
 					upperBound,
@@ -802,7 +808,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 					return err
 				}
 
-				// only cutting above needed
+				// no cutting needed
 				newRange = []*IPAttributes{
 					lowerBound,
 					upperBound,
@@ -822,6 +828,7 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 	}
 
 	// lenInside % 2 == 1
+	// odd number of ranges inside the new range
 
 	// delete all boundaries inside
 	// of the new to be inserted range
@@ -832,33 +839,111 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 
 	newRangeBoundaries := []*IPAttributes{}
 
-	if insideMostLeft.UpperBound {
+	if insideMostLeft.LowerBound && insideMostRight.UpperBound {
+		// insideMostLeft.LowerBound && insideMostRight.UpperBound
+		// nothing to cut, everything lies inside of the range
+		newRangeBoundaries = []*IPAttributes{
+			lowerBound,
+			upperBound,
+		}
+	} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
+		insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
+		newRangeBoundaries = []*IPAttributes{
+			cutBelow,
+			lowerBound,
+			upperBound,
+			cutAbove,
+		}
+
+	} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
 		// the range at the lower end of the new range is partially
 		// inside and partially outside the new range
 
+		// default case if not hit anything while cutting
 		newRangeBoundaries = []*IPAttributes{
 			cutBelow,
 			lowerBound,
 			upperBound,
 		}
 
-		rdb.fetchBoundaries(cutBelow.IP)
+		//rdb.fetchBoundaries(cutBelow.IP)
 
-		return rdb.insertBoundaries(newRangeBoundaries)
+		boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+		if err != nil {
+			return err
+		}
+
+		hitCutBelow := (*IPAttributes)(nil)
+
+		if len(boundaries) == 1 {
+			hitCutBelow = boundaries[0]
+		}
+
+		if hitCutBelow != nil {
+			// only hit lower boundary
+			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			if err != nil {
+				return err
+			}
+
+			// only insert new range boundaries
+			newRangeBoundaries = []*IPAttributes{
+				lowerBound,
+				upperBound,
+			}
+		}
+
+	} else if insideMostRight.LowerBound && insideMostRight.IsSingleBoundary() {
+		// the range at the upper end of the new range that is to be inserted
+		// is partially inside and partially outside the new range
+
+		// default case that we do not hit anything when cutting above our new range
+		newRangeBoundaries = []*IPAttributes{
+			lowerBound,
+			upperBound,
+			cutAbove,
+		}
+
+		//rdb.fetchBoundaries(cutAbove.IP)
+
+		boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+		if err != nil {
+			return err
+		}
+
+		hitCutAbove := (*IPAttributes)(nil)
+
+		if len(boundaries) == 1 {
+			hitCutAbove = boundaries[0]
+		}
+
+		if hitCutAbove != nil {
+			// only hit boundary above upper boundary
+			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			if err != nil {
+				return err
+			}
+
+			// only insert new range boundaries
+			newRangeBoundaries = []*IPAttributes{
+				lowerBound,
+				upperBound,
+			}
+		}
+	} else {
+		panic("unexpected case")
 	}
 
-	// the range at the upper end of the new range that is to be inserted
-	// is partially inside and partially outside the new range
-
-	newRangeBoundaries = []*IPAttributes{
-		lowerBound,
-		upperBound,
-		cutAbove,
+	err = rdb.insertBoundaries(newRangeBoundaries)
+	if err != nil {
+		return err
 	}
 
-	rdb.fetchBoundaries(cutAbove.IP)
-
-	return rdb.insertBoundaries(newRangeBoundaries)
+	if !consistentTest(rdb) {
+		panic("intended")
+	}
+	//FIX:
+	return nil
 }
 
 // Remove removes a range from the set
@@ -1563,5 +1648,54 @@ func (rdb *RedisClient) InAnyRange(ip string) (string, error) {
 	}
 
 	return below.Reason, nil
+}
 
+// Tests whether the database is in a cosistent state.
+func consistentTest(rdb *RedisClient) bool {
+	attributes, err := rdb.insideInfRange()
+	if err != nil {
+		panic(err)
+	}
+
+	const LowerBound = 0
+	const UpperBound = 1
+
+	// t.Logf("%d attributes fetched from database.", len(attributes))
+	// for idx, attr := range attributes {
+	// 	t.Logf("\tidx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
+	// }
+
+	cnt := 0
+	state := 0
+	for idx, attr := range attributes {
+
+		if attr.LowerBound && attr.UpperBound {
+			if state != UpperBound {
+				return false
+			}
+
+			cnt += 2
+		} else if attr.LowerBound {
+			if state != UpperBound {
+				return false
+			}
+			cnt++
+			state = cnt % 2
+		} else if attr.UpperBound {
+			if state != LowerBound {
+				return false
+			}
+
+			// reasons consistent
+			if idx > 0 && attr.Reason != attributes[idx-1].Reason {
+				//t.Errorf("reason mismatch: idx=%4d reason=%q idx=%4d reason=%q", idx-1, attributes[idx-1].Reason, idx, attr.Reason)
+				return false
+			}
+
+			cnt++
+			state = cnt % 2
+		}
+	}
+
+	return state == LowerBound
 }
