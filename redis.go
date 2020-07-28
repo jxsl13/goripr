@@ -443,59 +443,58 @@ func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 
 		hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
 		if len(boundaries) == 2 {
-			hitCutBelow = boundaries[0]
-			hitCutAbove = boundaries[1]
+			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
+		}
 
-			if hitCutBelow != nil && hitCutAbove != nil {
-				tx := rdb.TxPipeline()
+		if hitCutBelow != nil && hitCutAbove != nil {
+			tx := rdb.TxPipeline()
 
-				// cutting above single value range
-				// lower bound gets high attribute
-				rdb.HSet(hitCutBelow.ID, "high", true)
+			// cutting above single value range
+			// lower bound gets high attribute
+			rdb.HSet(hitCutBelow.ID, "high", true)
 
-				// cutting below single value range
-				// upper bound gets low attribute
-				rdb.HSet(hitCutAbove.ID, "low", true)
+			// cutting below single value range
+			// upper bound gets low attribute
+			rdb.HSet(hitCutAbove.ID, "low", true)
 
-				_, err = tx.Exec()
-				if err != nil {
-					return err
-				}
+			_, err = tx.Exec()
+			if err != nil {
+				return err
+			}
 
-				// no cutting needed
-				newRange = []*IPAttributes{
-					singleBoundary,
-				}
+			// no cutting needed
+			newRange = []*IPAttributes{
+				singleBoundary,
+			}
 
-			} else if hitCutBelow != nil {
-				// only hitCutBelow
+		} else if hitCutBelow != nil {
+			// only hitCutBelow
 
-				// boundary below becomes a single value range
-				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
-				if err != nil {
-					return err
-				}
+			// boundary below becomes a single value range
+			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			if err != nil {
+				return err
+			}
 
-				// only cutting above needed
-				newRange = []*IPAttributes{
-					singleBoundary,
-					cutAbove,
-				}
+			// only cutting above needed
+			newRange = []*IPAttributes{
+				singleBoundary,
+				cutAbove,
+			}
 
-			} else if hitCutAbove != nil {
-				// only hitCutAbove
+		} else if hitCutAbove != nil {
+			// only hitCutAbove
 
-				// boundary above becomes a single value range
-				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
-				if err != nil {
-					return err
-				}
+			// boundary above becomes a single value range
+			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			if err != nil {
+				return err
+			}
 
-				// only cutting above needed
-				newRange = []*IPAttributes{
-					cutBelow,
-					singleBoundary,
-				}
+			// only cutting above needed
+			newRange = []*IPAttributes{
+				cutBelow,
+				singleBoundary,
 			}
 		}
 
@@ -647,52 +646,179 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 	insideMostRight := inside[lenInside-1]
 
 	if lenInside%2 == 0 {
-		// even number of boundaries inside of the range
 
-		if insideMostLeft.LowerBound && insideMostRight.UpperBound {
-			// all ranges are inside of the new range.
-			// meaning they are smaller and can be replaced by the new bigger range
-
-			// delete all inside boundaries
-			err = rdb.removeIDs(idsOf(inside)...)
-			if err != nil {
-				return err
-			}
-
-			// insert range
-			return rdb.insertRangeIntUnsafe(lowInt64, highInt64, reason)
-
-		} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
-			insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
-
-		} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
-
-		} else if insideMostRight.LowerBound && insideMostRight.IsSingleBoundary() {
-
-		} else {
-
-		}
-		// ranges lie outside on both sides, meaning:
-		// the mostLeft is an UpperBound, the mostRight is a lowerBound
-
-		// delete all inside boundaries
-		err = rdb.removeIDs(idsOf(inside)...)
-
-		if err != nil {
-			return err
-		}
-
-		newRangeBoundaries := []*IPAttributes{
+		// default case, cut two ranges
+		newRange := []*IPAttributes{
 			cutBelow,
 			lowerBound,
 			upperBound,
 			cutAbove,
 		}
 
-		rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+		// even number of boundaries inside of the range
+
+		if insideMostLeft.LowerBound && insideMostRight.UpperBound {
+			// all ranges are inside of the new range.
+			// meaning they are smaller and can be replaced by the new bigger range
+
+			newRange = []*IPAttributes{
+				lowerBound,
+				upperBound,
+			}
+
+		} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
+			insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
+
+			boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+
+			if len(boundaries) == 2 {
+				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
+			}
+
+			if hitCutBelow != nil && hitCutAbove != nil {
+				tx := rdb.TxPipeline()
+
+				// cutting above single value range
+				// lower bound gets high attribute
+				rdb.HSet(hitCutBelow.ID, "high", true)
+
+				// cutting below single value range
+				// upper bound gets low attribute
+				rdb.HSet(hitCutAbove.ID, "low", true)
+
+				_, err = tx.Exec()
+				if err != nil {
+					return err
+				}
+
+				// no cutting needed
+				newRange = []*IPAttributes{
+					lowerBound,
+					upperBound,
+				}
+
+			} else if hitCutBelow != nil {
+				// only hitCutBelow
+
+				// boundary below becomes a single value range
+				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					lowerBound,
+					upperBound,
+					cutAbove,
+				}
+
+			} else if hitCutAbove != nil {
+				// only hitCutAbove
+
+				// boundary above becomes a single value range
+				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					cutBelow,
+					lowerBound,
+					upperBound,
+				}
+			}
+
+			// default value from above is used instead
+
+		} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
+
+			// default: nothing below the lower bound is hit when cutting
+			newRange = []*IPAttributes{
+				cutBelow,
+				lowerBound,
+				upperBound,
+			}
+
+			boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutBelow := (*IPAttributes)(nil)
+			if len(boundaries) == 1 {
+				hitCutBelow = boundaries[0]
+
+			}
+
+			if hitCutBelow != nil {
+				// only hitCutBelow
+
+				// boundary below becomes a single value range
+				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					lowerBound,
+					upperBound,
+				}
+			}
+		} else {
+			// insideMostRight.LowerBound && insideMostRight.IsSingleBoundary()
+
+			// default: nothing below the lower bound is hit when cutting
+			newRange = []*IPAttributes{
+				lowerBound,
+				upperBound,
+				cutAbove,
+			}
+
+			boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+			if err != nil {
+				return err
+			}
+
+			hitCutAbove := (*IPAttributes)(nil)
+
+			if len(boundaries) == 1 {
+				hitCutAbove = boundaries[0]
+			}
+
+			if hitCutAbove != nil {
+				// only hitCutAbove
+
+				// boundary below becomes a single value range
+				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				if err != nil {
+					return err
+				}
+
+				// only cutting above needed
+				newRange = []*IPAttributes{
+					lowerBound,
+					upperBound,
+				}
+			}
+		}
+
+		// delete all inside boundaries
+		err = rdb.removeIDs(idsOf(inside)...)
+		if err != nil {
+			return err
+		}
 
 		// insert lower cut, new range, upper cut boundary
-		return rdb.insertBoundaries(newRangeBoundaries)
+		// depending on what is actually in the newRange
+		return rdb.insertBoundaries(newRange)
 	}
 
 	// lenInside % 2 == 1
