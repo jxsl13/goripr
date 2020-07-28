@@ -893,7 +893,9 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 			}
 		}
 
-	} else if insideMostRight.LowerBound && insideMostRight.IsSingleBoundary() {
+	} else {
+		// insideMostRight.LowerBound && insideMostRight.IsSingleBoundary()
+
 		// the range at the upper end of the new range that is to be inserted
 		// is partially inside and partially outside the new range
 
@@ -930,20 +932,9 @@ func (rdb *RedisClient) insertRangeInt(lowInt64, highInt64 int64, reason string)
 				upperBound,
 			}
 		}
-	} else {
-		panic("unexpected case")
 	}
 
-	err = rdb.insertBoundaries(newRangeBoundaries)
-	if err != nil {
-		return err
-	}
-
-	if !consistentTest(rdb) {
-		panic("intended")
-	}
-	//FIX:
-	return nil
+	return rdb.insertBoundaries(newRangeBoundaries)
 }
 
 // Remove removes a range from the set
