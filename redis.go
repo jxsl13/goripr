@@ -949,6 +949,14 @@ func (rdb *RedisClient) Remove(ipRange string) error {
 	lowInt64 := lowInt.Int64()
 	highInt64 := highInt.Int64()
 
+	if lowInt64 == highInt64 {
+		// edge case, range is single value
+		err = rdb.insertSingleInt(lowInt64, DeleteReason)
+		if err != nil {
+			return err
+		}
+	}
+
 	err = rdb.insertRangeInt(lowInt64, highInt64, DeleteReason)
 	if err != nil {
 		return err
