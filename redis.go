@@ -282,7 +282,7 @@ func (rdb *RedisClient) Insert(ipRange, reason string) error {
 
 func (rdb *RedisClient) insertSingleInt(singleInt int64, reason string) error {
 
-	below, above, err := rdb.neighboursInt(singleInt, 4)
+	below, above, err := rdb.neighboursInt(singleInt, 1)
 	if err != nil {
 		return err
 	}
