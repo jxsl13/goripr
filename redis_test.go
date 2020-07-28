@@ -227,9 +227,9 @@ func shuffle(seed int64, a []rangeReason) []rangeReason {
 	return a
 }
 
-func initRanges() {
+func initRanges(num int) {
 	// generate ranges
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < num; i++ {
 		ipRange, _ := generateRange()
 		ranges = append(ranges, rangeReason{
 			Range:  ipRange,
@@ -240,7 +240,7 @@ func initRanges() {
 
 func TestRedisClient_Insert(t *testing.T) {
 	// generate random ranges
-	initRanges()
+	initRanges(1000)
 
 	// initial test
 	tests := []testCase{
@@ -248,7 +248,7 @@ func TestRedisClient_Insert(t *testing.T) {
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10000; i++ {
 		seed := time.Now().UnixNano()
 
 		var shuffledRange []rangeReason
