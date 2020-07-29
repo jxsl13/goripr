@@ -248,6 +248,15 @@ func TestClient_Insert(t *testing.T) {
 
 	// initial test
 	tests := []testCase{
+		{"cut below and cut above hit a boundary",
+			[]rangeReason{
+				{"123.0.0.0 - 123.0.0.2", "1st"},
+				{"123.0.0.4 - 123.0.0.6", "2nd"},
+				{"123.0.0.3", "3rd"},
+				{"123.0.0.1 - 123.0.0.5", "4th"},
+			},
+			false,
+		},
 		{"simple insert all", ranges, false},
 	}
 

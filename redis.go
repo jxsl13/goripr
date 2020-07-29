@@ -464,7 +464,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		return err
 	}
 
-	// todo check if this lies outside of th erange
+	// todo check if this lies outside of the range
 	belowLowerClosest := belowLowerBound[len(belowLowerBound)-1]
 	aboveUpperClosest := aboveUpperBound[0]
 	// todo: move cuts to their respective positions
@@ -793,6 +793,62 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			lowerBound,
 			upperBound,
 			cutAbove,
+		}
+
+		boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+		if err != nil {
+			return err
+		}
+
+		hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+
+		if len(boundaries) == 2 {
+			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
+		}
+
+		if hitCutBelow != nil && hitCutAbove != nil {
+			// hit lower & upper boundary
+			tx := rdb.TxPipeline()
+			tx.HSet(hitCutBelow.ID, "high", true)
+			tx.HSet(hitCutAbove.ID, "low", true)
+
+			_, err = tx.Exec()
+			if err != nil {
+				return err
+			}
+
+			// hit both boundaries, insert only new range
+			newRangeBoundaries = []*IPAttributes{
+				lowerBound,
+				upperBound,
+			}
+
+		} else if hitCutBelow != nil {
+			// only hit lower boundary
+			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			if err != nil {
+				return err
+			}
+
+			// insert everything except lower cut
+			newRangeBoundaries = []*IPAttributes{
+				lowerBound,
+				upperBound,
+				cutAbove,
+			}
+		} else if hitCutAbove != nil {
+			// only hit upper boundary
+			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			if err != nil {
+				return err
+			}
+
+			// insert everything except upper cut
+			newRangeBoundaries = []*IPAttributes{
+				cutBelow,
+				lowerBound,
+				upperBound,
+			}
 		}
 
 	} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
