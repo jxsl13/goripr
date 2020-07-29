@@ -89,7 +89,7 @@ func consistent(rdb *Client, t *testing.T, iteration int) bool {
 		panic(err)
 	}
 
-	if iteration > 0 && len(attributes) == 0 {
+	if iteration > 0 && len(attributes) <= 2 {
 		panic("databse empty")
 	}
 
@@ -98,7 +98,7 @@ func consistent(rdb *Client, t *testing.T, iteration int) bool {
 
 	t.Logf("%d attributes fetched from database.", len(attributes))
 	for idx, attr := range attributes {
-		t.Logf("\tidx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
+		t.Logf("\tuuid=%s idx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", attr.ID, idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
 	}
 
 	cnt := 0
@@ -133,14 +133,18 @@ func consistent(rdb *Client, t *testing.T, iteration int) bool {
 		}
 	}
 
-	return state == LowerBound
+	if state != LowerBound {
+		return false // for debugging breakpoints
+	}
+
+	return true
 }
 
 // generateRange generates a valid IP range
 // and and returns a random IP that is within the range
 func generateRange() (ipRange string, insideIP string) {
 
-	const minIP = 16777216
+	const minIP = 16777216 + 100000000 // don't want empty IP bytes
 	const maxIP = 4294967295
 
 	const randBorder = maxIP - minIP
@@ -271,7 +275,7 @@ func TestClient_Insert(t *testing.T) {
 			for _, ipRange := range tt.ipRanges {
 
 				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
-					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
+					t.Fatalf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
 				}
 
 				if !consistent(rdb, t, idx) {
