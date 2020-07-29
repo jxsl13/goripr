@@ -989,7 +989,7 @@ func (rdb *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
 	}
 
 	// force sorting
-	sort.Sort(byScore(insideResults[:]))
+	sort.Sort(byScore(insideResults))
 
 	ret := make([]string, 0, len(insideResults))
 
@@ -1036,7 +1036,7 @@ func (rdb *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttrib
 		inside = append(inside, attr)
 	}
 
-	sort.Sort(byAttributeIP(inside[:]))
+	sort.Sort(byAttributeIP(inside))
 	return
 }
 

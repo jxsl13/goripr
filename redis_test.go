@@ -244,7 +244,7 @@ func initRanges(num int) {
 
 func TestClient_Insert(t *testing.T) {
 	// generate random ranges
-	initRanges(100)
+	initRanges(10000)
 
 	// initial test
 	tests := []testCase{
