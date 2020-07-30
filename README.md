@@ -1,5 +1,7 @@
 # Go Redis IP Ranges (goripr)
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/jxsl13/goripr)](https://goreportcard.com/report/github.com/jxsl13/goripr)
+
 **goripr** is an eficient way to store ip ranges in a redis database and mapping those ranges to specific strings.
 
 This package wraps the widely used redis Go client and extends its feature set with a storage efficient mapping of IPv4 IP ranges to specific strings called reason.
