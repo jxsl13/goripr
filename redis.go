@@ -1071,7 +1071,7 @@ func (rdb *Client) insideInfRange() (inside []*IPAttributes, err error) {
 		inside = append(inside, attr)
 	}
 
-	sort.Sort(byAttributeIP(inside[1 : len(inside)-2]))
+	sort.Sort(byAttributeIP(inside))
 	return
 }
 
@@ -1513,7 +1513,7 @@ func (rdb *Client) Find(ip string) (string, error) {
 	inRange := below.LowerBound && !below.UpperBound &&
 		!above.LowerBound && above.UpperBound
 
-	if below.Reason != above.Reason {
+	if inRange && below.Reason != above.Reason {
 		panic(fmt.Errorf(" '%s'.Reason != '%s'.Reason : '%s' != '%s'", below.ID, above.ID, below.Reason, above.Reason))
 	}
 
