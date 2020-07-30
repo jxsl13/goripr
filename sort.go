@@ -10,6 +10,15 @@ func (a byAttributeIP) Less(i, j int) bool {
 	aInt, _ := IPToInt(a[i].IP)
 	bInt, _ := IPToInt(a[j].IP)
 
+	aID := a[i].ID
+	bID := a[j].ID
+
+	if aID == "-inf" || bID == "+inf" {
+		return true
+	} else if aID == "+inf" || bID == "-inf" {
+		return false
+	}
+
 	return aInt.Cmp(bInt) < 0
 }
 
