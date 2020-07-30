@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
 	//"runtime"
 	//"strings"
 
@@ -87,7 +88,7 @@ type testCase struct {
 }
 
 // Tests whether the database is in a cosistent state.
-func consistent(rdb *Client, t *testing.T, ipRange string,  iteration int) bool {
+func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 
 	attributes, err := rdb.insideInfRange()
 	if err != nil {
@@ -111,13 +112,13 @@ func consistent(rdb *Client, t *testing.T, ipRange string,  iteration int) bool 
 		if err != nil {
 			panic(err)
 		}
-	
+
 		foundLow, foundHigh := false, false
 		for _, attr := range attributes {
 			if attr.IP.Equal(low) && attr.LowerBound {
 				foundLow = true
 			}
-	
+
 			if attr.IP.Equal(high) && attr.UpperBound {
 				foundHigh = true
 			}
@@ -133,7 +134,6 @@ func consistent(rdb *Client, t *testing.T, ipRange string,  iteration int) bool 
 			return false
 		}
 	}
-
 
 	cnt := 0
 	state := LowerBound
@@ -328,7 +328,7 @@ func TestClient_Insert(t *testing.T) {
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		seed := time.Now().UnixNano()
 
 		shuffledRange := make([]rangeReason, len(ranges))
@@ -415,12 +415,12 @@ func initTestCasesFind(num int) (testCases []testCaseFind) {
 	for i := 0; i < num; i++ {
 
 		seed := time.Now().UnixNano()
-		
+
 		shuffledRange := make([]rangeIPReason, len(findRanges))
 		copy(shuffledRange, findRanges)
 		shuffleFindTest(seed, shuffledRange)
-		
-		if i == 0  {
+
+		if i == 0 {
 			shuffledRange = findRanges
 		}
 
@@ -437,19 +437,16 @@ func TestClient_Find(t *testing.T) {
 
 	tests := initTestCasesFind(10)
 
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
 			rdb := initRDB(0)
 			defer rdb.Close()
-			
 
 			for idx, rir := range tt.ipRanges {
 				ipToFind := rir.IP
 				reasonToFind := rir.Reason
 				rangeToFind := rir.Range
-
 
 				err := rdb.Insert(rangeToFind, reasonToFind)
 				if err != nil {
@@ -457,10 +454,9 @@ func TestClient_Find(t *testing.T) {
 					return
 				}
 
-				if !consistent(rdb, t, rangeToFind, idx){
+				if !consistent(rdb, t, rangeToFind, idx) {
 					t.Fatalf("database inconsistent")
 				}
-
 
 				got, err := rdb.Find(ipToFind)
 
@@ -483,11 +479,9 @@ func TestClient_Find(t *testing.T) {
 
 func TestClient_Remove(t *testing.T) {
 
-	tests := []testCaseFind{
+	tests := []testCaseFind{}
 
-	}
-	
-	tests = append(tests, initTestCasesFind(1000)...)
+	tests = append(tests, initTestCasesFind(10)...)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -497,7 +491,6 @@ func TestClient_Remove(t *testing.T) {
 				rdb.FlushDB().Result()
 			}()
 			defer rdb.Close()
-			
 
 			for idx, rir := range tt.ipRanges {
 				ipToFind := rir.IP
@@ -510,7 +503,7 @@ func TestClient_Remove(t *testing.T) {
 					t.FailNow()
 				}
 
-				if !consistent(rdb, t,rangeToFind, idx) {
+				if !consistent(rdb, t, rangeToFind, idx) {
 					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
 					t.FailNow()
 				}
