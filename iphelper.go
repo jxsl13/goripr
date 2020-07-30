@@ -2,9 +2,10 @@ package goripr
 
 import (
 	"fmt"
-	"math/big"
 	"net"
 	"regexp"
+
+	"github.com/xgfone/netaddr"
 )
 
 var (
@@ -25,43 +26,42 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 
 	if matches := ipCidrRegex.FindStringSubmatch(ipRange); len(matches) == 2 {
 
-		var netRange *net.IPNet
-
-		_, netRange, err = net.ParseCIDR(matches[1])
+		net, err := netaddr.NewIPNetwork(matches[1])
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w : %v", ErrInvalidRange, err)
 		}
-		low, high = AddressRange(netRange)
+
+		low, high = net.First().IP(), net.Last().IP()
 
 	} else if matches := ipRangeRegex.FindStringSubmatch(ipRange); len(matches) == 3 {
 
-		low = net.ParseIP(matches[1])
-		high = net.ParseIP(matches[2])
+		lowAddr, err := netaddr.NewIPAddress(matches[1])
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w : %v", ErrInvalidRange, err)
+		}
+		highAddr, err := netaddr.NewIPAddress(matches[2])
 
-		if low == nil || high == nil {
-			return nil, nil, fmt.Errorf("%w : %s", ErrInvalidRange, "one of the two IPs is invalid")
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w : %v", ErrInvalidRange, err)
 		}
 
-		lowInt, _ := IPToInt(low)
-		highInt, _ := IPToInt(high)
-
-		cmp := lowInt.Cmp(highInt)
-
-		if cmp > 0 {
+		if lowAddr.Compare(highAddr) > 0 {
 			return nil, nil, fmt.Errorf("%w : %s", ErrInvalidRange, "first IP must be smaller than second or equal to")
 		}
 
 		// low & high are valid!
+		low, high = lowAddr.IP(), highAddr.IP()
+
 	} else if matches := ipRegex.FindStringSubmatch(ipRange); len(matches) == 2 {
 
-		ip := net.ParseIP(matches[1])
+		ip, err := netaddr.NewIPAddress(matches[1])
 
-		if ip == nil {
+		if err != nil {
 			return nil, nil, fmt.Errorf("%w : %s", ErrInvalidRange, "invalid IP")
 		}
 
 		// low & high are valid
-		low, high = ip, ip
+		low, high = ip.IP(), ip.IP()
 	} else {
 		return nil, nil, ErrInvalidRange
 	}
@@ -73,96 +73,44 @@ func Boundaries(ipRange string) (low, high net.IP, err error) {
 		return nil, nil, ErrIPv6NotSupported
 	}
 
-	// low, high, nil
-	return
+	return low, high, nil
 }
 
-// AddressRange returns the first and last addresses in the given CIDR range.
-func AddressRange(network *net.IPNet) (net.IP, net.IP) {
-	// the first IP is easy
-	firstIP := network.IP
-
-	if firstIP = firstIP.To4(); firstIP == nil {
-		return nil, nil
+// IPToInt64 returns th einteger representation of the passed IP
+func IPToInt64(ip net.IP) (int64, error) {
+	ipAddr, err := netaddr.NewIPAddress(ip)
+	if err != nil {
+		return 0, err
 	}
 
-	// the last IP is the network address OR NOT the mask address
-	prefixLen, bits := network.Mask.Size()
-
-	if prefixLen == bits {
-		// Easy!
-		// But make sure that our two slices are distinct, since they
-		// would be in all other cases.
-		lastIP := make([]byte, len(firstIP))
-		copy(lastIP, firstIP)
-		return firstIP, lastIP
-	}
-
-	firstIPInt, bits := IPToInt(firstIP)
-
-	if bits == IPv6Bits {
-		bits = IPv4Bits
-	}
-
-	hostLen := uint(bits) - uint(prefixLen)
-	lastIPInt := big.NewInt(1)
-	lastIPInt.Lsh(lastIPInt, hostLen)
-	lastIPInt.Sub(lastIPInt, big.NewInt(1))
-	lastIPInt.Or(lastIPInt, firstIPInt)
-
-	lastIP := IntToIP(lastIPInt, IPv4Bits)
-
-	return firstIP, lastIP
+	return ipAddr.BigInt().Int64(), nil
 }
 
-// IPToInt returns the IP as bigInt as well as the number of occupied
-func IPToInt(ip net.IP) (*big.Int, int) {
-	val := &big.Int{}
-	val.SetBytes([]byte(ip))
-
-	leadingZeroBytes := 0
-	for _, b := range ip {
-		if b == 0 {
-			leadingZeroBytes++
-		} else {
-			break
-		}
+// Int64ToIP returns an ip from the passed integer
+func Int64ToIP(i int64) (net.IP, error) {
+	ipAddr, err := netaddr.NewIPAddress(i)
+	if err != nil {
+		return nil, err
 	}
 
-	occupiedBytes := len(ip) - leadingZeroBytes
-	if occupiedBytes == net.IPv4len && len(ip) == net.IPv4len {
-		return val, IPv4Bits
-	}
-	// if statements in ascending length order
-	if occupiedBytes == net.IPv4len+2 && len(ip) == net.IPv6len && ip[10] == 255 && ip[11] == 255 {
-		return val, IPv4Bits
-	} else if occupiedBytes <= net.IPv4len {
-		return val, IPv4Bits
-	} else if occupiedBytes <= net.IPv6len {
-		return val, IPv6Bits
-	} else {
-		panic(fmt.Errorf("Unsupported address length %d", len(ip)))
-	}
+	return ipAddr.IP(), nil
 }
 
-// IntToIP converts a bigInt to an IP address
-func IntToIP(ipInt *big.Int, ipBits int) net.IP {
-	size := ipBits / 8
-	ipBytes := ipInt.Bytes()
-
-	if len(ipBytes) < size {
-		size = len(ipBytes)
+// Float64ToIP returns an ip from the passed integer
+func Float64ToIP(i float64) (net.IP, error) {
+	ipAddr, err := netaddr.NewIPAddress(int64(i))
+	if err != nil {
+		return nil, err
 	}
 
-	if size == 6 {
-		size = IPv4Bits / 8
-	}
+	return ipAddr.IP(), nil
+}
 
-	ret := make([]byte, size)
-	// Pack our IP bytes into the end of the return array,
-	// since big.Int.Bytes() removes front zero padding.
-	for i := 1; i <= size; i++ {
-		ret[size-i] = ipBytes[len(ipBytes)-i]
+// IPToFloat64 returns th einteger representation of the passed IP
+func IPToFloat64(ip net.IP) (float64, error) {
+	ipAddr, err := netaddr.NewIPAddress(ip)
+	if err != nil {
+		return 0, err
 	}
-	return net.IP(ret)
+	return float64(ipAddr.BigInt().Int64()), nil
 }

@@ -2,11 +2,15 @@ package goripr
 
 import (
 	"fmt"
-	"math/big"
+	"math"
 	"math/rand"
 	"regexp"
 	"testing"
 	"time"
+	//"runtime"
+	//"strings"
+
+	"github.com/xgfone/netaddr"
 )
 
 type rangeReason struct {
@@ -83,7 +87,8 @@ type testCase struct {
 }
 
 // Tests whether the database is in a cosistent state.
-func consistent(rdb *Client, t *testing.T, iteration int) bool {
+func consistent(rdb *Client, t *testing.T, ipRange string,  iteration int) bool {
+
 	attributes, err := rdb.insideInfRange()
 	if err != nil {
 		panic(err)
@@ -101,8 +106,37 @@ func consistent(rdb *Client, t *testing.T, iteration int) bool {
 		t.Logf("\tuuid=%s idx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", attr.ID, idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
 	}
 
+	if ipRange != "" {
+		low, high, err := Boundaries(ipRange)
+		if err != nil {
+			panic(err)
+		}
+	
+		foundLow, foundHigh := false, false
+		for _, attr := range attributes {
+			if attr.IP.Equal(low) && attr.LowerBound {
+				foundLow = true
+			}
+	
+			if attr.IP.Equal(high) && attr.UpperBound {
+				foundHigh = true
+			}
+		}
+		if !foundLow || !foundHigh {
+			if !foundLow && !foundHigh {
+				t.Errorf("did neither find inserted LOWERBOUND neither UPPERBOUND")
+			} else if !foundLow {
+				t.Errorf("did not find inserted LOWERBOUND")
+			} else {
+				t.Errorf("did not find inserted UPPERBOUND")
+			}
+			return false
+		}
+	}
+
+
 	cnt := 0
-	state := 0
+	state := LowerBound
 	for idx, attr := range attributes {
 
 		if attr.LowerBound && attr.UpperBound {
@@ -140,12 +174,28 @@ func consistent(rdb *Client, t *testing.T, iteration int) bool {
 	return true
 }
 
+func generateBetween(low, high int64) int64 {
+
+	if low > high {
+		low, high = high, low
+	}
+
+	rand.Seed(time.Now().UnixNano())
+
+	between := low
+	if high-low > 0 {
+		between = low + rand.Int63n(high-low)
+	}
+
+	return between
+}
+
 // generateRange generates a valid IP range
 // and and returns a random IP that is within the range
 func generateRange() (ipRange string, insideIP string) {
 
-	const minIP = 16777216 + 100000000 // don't want empty IP bytes
-	const maxIP = 4294967295
+	const minIP = math.MaxInt32 / 1024 // don't want empty IP bytes
+	const maxIP = math.MaxInt32 / 2
 
 	const randBorder = maxIP - minIP
 
@@ -159,15 +209,14 @@ func generateRange() (ipRange string, insideIP string) {
 		low, high = high, low
 	}
 
-	rand.Seed(time.Now().UnixNano())
+	between := generateBetween(low, high)
 
-	between := low
-	if high-low > 0 {
-		between = rand.Int63n(high - low)
+	if between < low || high < between {
+		panic("invalid ip generated")
 	}
 
-	lowIP := IntToIP(big.NewInt(low), IPv4Bits).To4().String()
-	highIP := IntToIP(big.NewInt(high), IPv4Bits).To4().String()
+	lowIP := netaddr.MustNewIPAddress(low).String()
+	highIP := netaddr.MustNewIPAddress(high).String()
 
 	testregex := regexp.MustCompile(`[.:0-9]+`)
 
@@ -175,23 +224,41 @@ func generateRange() (ipRange string, insideIP string) {
 		panic(fmt.Errorf("invalid ip generatred: low: %q high: %q", lowIP, highIP))
 	}
 
-	betweenIP := IntToIP(big.NewInt(between), IPv4Bits).String()
+	betweenIPStr := netaddr.MustNewIPAddress(between).String()
 
 	hyphenRange := fmt.Sprintf("%s - %s", lowIP, highIP)
+
+	rand.Seed(time.Now().UnixNano())
+
+	if rand.Int()%2 == 0 {
+		return hyphenRange, betweenIPStr
+	}
 
 	rand.Seed(time.Now().UnixNano())
 	mask := rand.Intn(32-1) + 1
 
 	cidrRange := fmt.Sprintf("%s/%d", lowIP, mask)
 
-	rand.Seed(time.Now().UnixNano())
+	net := netaddr.MustNewIPNetwork(cidrRange)
 
-	if rand.Int()%2 == 0 {
-		return hyphenRange, betweenIP
+	lower := net.First()
+	higher := net.Last()
+
+	lowerInt, _ := IPToInt64(lower.IP())
+	higherInt, _ := IPToInt64(higher.IP())
+
+	between = generateBetween(lowerInt, higherInt)
+
+	if between < lowerInt || higherInt < between {
+		panic("invalid ip generated")
 	}
 
-	return cidrRange, betweenIP
+	betweenIP, err := Int64ToIP(between)
+	if err != nil {
+		panic(err)
+	}
 
+	return cidrRange, betweenIP.String()
 }
 
 func initRDB(db int) *Client {
@@ -244,7 +311,7 @@ func initRanges(num int) {
 
 func TestClient_Insert(t *testing.T) {
 	// generate random ranges
-	initRanges(10000)
+	initRanges(100)
 
 	// initial test
 	tests := []testCase{
@@ -284,14 +351,16 @@ func TestClient_Insert(t *testing.T) {
 			for _, ipRange := range tt.ipRanges {
 
 				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
-					t.Fatalf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
+					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
+					return
 				}
 
-				if !consistent(rdb, t, idx) {
-					t.Fatalf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
-				} else {
-					t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
+				if !consistent(rdb, t, ipRange.Range, idx) {
+					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
+					return
 				}
+				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
+
 			}
 			_, err := rdb.FlushDB().Result()
 			if err != nil {
@@ -314,7 +383,9 @@ type testCaseFind struct {
 }
 
 var (
-	findRanges = []rangeIPReason{}
+	findRanges = []rangeIPReason{
+		{"17.115.210.3/30", "17.115.210.0", "manual 1"},
+	}
 )
 
 func initRangesAndIPsWithin(num int) {
@@ -339,18 +410,22 @@ func initTestCasesFind(num int) (testCases []testCaseFind) {
 
 	initRangesAndIPsWithin(100)
 
-	testCases = make([]testCaseFind, 0, num)
+	testCases = make([]testCaseFind, num)
 
 	for i := 0; i < num; i++ {
 
 		seed := time.Now().UnixNano()
-
+		
 		shuffledRange := make([]rangeIPReason, len(findRanges))
 		copy(shuffledRange, findRanges)
 		shuffleFindTest(seed, shuffledRange)
+		
+		if i == 0  {
+			shuffledRange = findRanges
+		}
 
 		testCases[i] = testCaseFind{
-			name:     fmt.Sprintf("random est case find %5d", i),
+			name:     fmt.Sprintf("random test case find %5d", i),
 			ipRanges: shuffledRange,
 			wantErr:  false,
 		}
@@ -360,38 +435,119 @@ func initTestCasesFind(num int) (testCases []testCaseFind) {
 
 func TestClient_Find(t *testing.T) {
 
-	tests := initTestCasesFind(100)
+	tests := initTestCasesFind(10)
+
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+
 			rdb := initRDB(0)
 			defer rdb.Close()
+			
 
-			for _, rir := range tt.ipRanges {
+			for idx, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
+
+				if !consistent(rdb, t, rangeToFind, idx){
+					t.Fatalf("database inconsistent")
+				}
+
+
+				got, err := rdb.Find(ipToFind)
+
+				if (err != nil) != tt.wantErr {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				if got != reasonToFind {
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					return
+				}
+			}
+
+			rdb.FlushDB().Result()
+
+		})
+	}
+}
+
+func TestClient_Remove(t *testing.T) {
+
+	tests := []testCaseFind{
+
+	}
+	
+	tests = append(tests, initTestCasesFind(1000)...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rdb := initRDB(0)
+			defer func() {
+				rdb.FlushDB().Result()
+			}()
+			defer rdb.Close()
+			
+
+			for idx, rir := range tt.ipRanges {
 				ipToFind := rir.IP
 				reasonToFind := rir.Reason
 				rangeToFind := rir.Range
 
 				err := rdb.Insert(rangeToFind, reasonToFind)
 				if err != nil {
-					t.Fatalf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					t.FailNow()
 				}
+
+				if !consistent(rdb, t,rangeToFind, idx) {
+					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
+					t.FailNow()
+				}
+				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
 
 				got, err := rdb.Find(ipToFind)
 
-				if (err != nil) != tt.wantErr {
-					t.Fatalf("rdb.Find() error = %v, wantErr %v", err, tt.wantErr)
+				if err != nil {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
 				}
 
 				if got != reasonToFind {
-					t.Fatalf("rdb.Find() = %q, want %q", got, reasonToFind)
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					t.FailNow()
 				}
 
-				_, err = rdb.FlushDB().Result()
+				err = rdb.Remove(rangeToFind)
+
 				if err != nil {
-					panic("failed to flush db")
+					t.Errorf("rdb.Remove(), RETURED ERROR = %q", err)
+					t.FailNow()
 				}
 
+				if !consistent(rdb, t, "", 0) {
+					t.Errorf("rdb.Remove() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
+					t.FailNow()
+				}
+				t.Logf("rdb.Remove() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
+
+				_, err = rdb.Find(ipToFind)
+
+				// should not be found after range deletion
+				if err == nil {
+					t.Errorf("rdb.Find(),FOUND AFTER RANGE DELETION error = %q\nRange: %q IP: %s", err.Error(), rangeToFind, ipToFind)
+					t.FailNow()
+				}
 			}
 		})
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"net"
 	"sort"
 	"strconv"
@@ -157,39 +156,37 @@ func (rdb *Client) insertBoundaries(boundaries []*IPAttributes) error {
 	tx := rdb.TxPipeline()
 	// fill transaction
 	for _, boundary := range boundaries {
-		uuid := ""
+		id := ""
 		if boundary.ID == "" {
-			uuid = generateUUID()
-			boundary.ID = uuid
+
+			id = boundary.IP.String()
+			boundary.ID = id
 		} else {
-			uuid = boundary.ID
+			id = boundary.ID
 		}
 
-		bigIntIP, ipBits := IPToInt(boundary.IP)
-
-		if ipBits > IPv4Bits {
-			return ErrIPv6NotSupported
+		intIP, err := IPToInt64(boundary.IP)
+		if err != nil {
+			return err
 		}
-
-		intIP := bigIntIP.Int64()
 
 		// insert into sorted set
 		tx.ZAdd(IPRangesKey,
 			redis.Z{
 				Score:  float64(intIP),
-				Member: uuid,
+				Member: id,
 			},
 		)
 
 		if boundary.LowerBound {
-			tx.HSet(uuid, "low", true)
+			tx.HSet(id, "low", true)
 		}
 
 		if boundary.UpperBound {
-			tx.HSet(uuid, "high", true)
+			tx.HSet(id, "high", true)
 		}
 
-		tx.HSet(uuid, "reason", boundary.Reason)
+		tx.HSet(id, "reason", boundary.Reason)
 	}
 
 	//execute transaction
@@ -208,11 +205,8 @@ func (rdb *Client) Insert(ipRange, reason string) error {
 		return err
 	}
 
-	lowInt, _ := IPToInt(low)
-	highInt, _ := IPToInt(high)
-
-	lowInt64 := lowInt.Int64()
-	highInt64 := highInt.Int64()
+	lowInt64, _ := IPToInt64(low)
+	highInt64, _ := IPToInt64(high)
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
@@ -232,8 +226,13 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 	closestBelow := below[len(below)-1]
 	closestAbove := above[0]
 
+	ip, err := Int64ToIP(singleInt)
+	if err != nil {
+		return err
+	}
+
 	singleBoundary := &IPAttributes{
-		IP:         IntToIP(big.NewInt(singleInt), IPv4Bits),
+		IP:         ip,
 		Reason:     reason,
 		LowerBound: true,
 		UpperBound: true,
@@ -263,8 +262,13 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 		} else if hitBoundary.LowerBound {
 			// must be single boundary, meaning a range with at least two members
 
+			ip, err := Int64ToIP(hitBoundary.IPInt64() + 1)
+			if err != nil {
+				return err
+			}
+
 			cutAbove := &IPAttributes{
-				IP:         IntToIP(big.NewInt(hitBoundary.IPInt64()+1), IPv4Bits),
+				IP:         ip,
 				Reason:     hitBoundary.Reason,
 				LowerBound: true,
 			}
@@ -310,9 +314,12 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 
 		} else {
 			// hitBoundary.UpperBound
-
+			ip, err := Int64ToIP(hitBoundary.IPInt64() - 1)
+			if err != nil {
+				return err
+			}
 			cutBelow := &IPAttributes{
-				IP:         IntToIP(big.NewInt(hitBoundary.IPInt64()-1), IPv4Bits),
+				IP:         ip,
 				Reason:     hitBoundary.Reason,
 				UpperBound: true,
 			}
@@ -361,14 +368,24 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 	} else if closestBelow.LowerBound && closestAbove.UpperBound &&
 		closestBelow.IsSingleBoundary() && closestAbove.IsSingleBoundary() {
 		// inside a range
-		// TODO: try not to hit upper or lower boundaries when cutting above or below the current one
+		ip, err := Int64ToIP(singleInt - 1)
+		if err != nil {
+			return err
+		}
+
 		cutBelow := &IPAttributes{
-			IP:         IntToIP(big.NewInt(singleInt-1), IPv4Bits),
+			IP:         ip,
 			Reason:     closestBelow.Reason,
 			UpperBound: true,
 		}
+
+		ip, err = Int64ToIP(singleInt + 1)
+		if err != nil {
+			return err
+		}
+
 		cutAbove := &IPAttributes{
-			IP:         IntToIP(big.NewInt(singleInt+1), IPv4Bits),
+			IP:         ip,
 			Reason:     closestAbove.Reason,
 			LowerBound: true,
 		}
@@ -467,37 +484,61 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 	// todo check if this lies outside of the range
 	belowLowerClosest := belowLowerBound[len(belowLowerBound)-1]
 	aboveUpperClosest := aboveUpperBound[0]
+
+	ip, err := Int64ToIP(lowInt64 - 1)
+	if err != nil {
+		return err
+	}
+
 	// todo: move cuts to their respective positions
 	cutBelow := &IPAttributes{
-		IP:         IntToIP(big.NewInt(lowInt64-1), IPv4Bits),
+		IP:         ip,
 		Reason:     belowLowerClosest.Reason,
 		UpperBound: true,
 	}
 
+	ip, err = Int64ToIP(lowInt64)
+	if err != nil {
+		return err
+	}
+
 	lowerBound := &IPAttributes{
-		IP:         IntToIP(big.NewInt(lowInt64), IPv4Bits),
+		IP:         ip,
 		Reason:     reason,
 		LowerBound: true,
 	}
 
+	ip, err = Int64ToIP(highInt64)
+	if err != nil {
+		return err
+	}
+
 	upperBound := &IPAttributes{
-		IP:         IntToIP(big.NewInt(highInt64), IPv4Bits),
+		IP:         ip,
 		Reason:     reason,
 		UpperBound: true,
 	}
 
+	ip, err = Int64ToIP(highInt64 + 1)
+	if err != nil {
+		return err
+	}
+
 	cutAbove := &IPAttributes{
-		IP:         IntToIP(big.NewInt(highInt64+1), IPv4Bits),
+		IP:         ip,
 		Reason:     aboveUpperClosest.Reason,
 		LowerBound: true,
 	}
 
+	// if cutAbove.EqualIP(aboveUpperClosest) {
+	// 	runtime.Breakpoint()
+	// }
 	lenInside := len(inside)
 
 	if lenInside == 0 {
 		// nothin inside range
 
-		newRangeBoundaries := []*IPAttributes{}
+		var newRangeBoundaries []*IPAttributes
 
 		if belowLowerClosest.LowerBound && aboveUpperClosest.UpperBound &&
 			belowLowerClosest.IsSingleBoundary() && aboveUpperClosest.IsSingleBoundary() {
@@ -937,11 +978,8 @@ func (rdb *Client) Remove(ipRange string) error {
 		return err
 	}
 
-	lowInt, _ := IPToInt(low)
-	highInt, _ := IPToInt(high)
-
-	lowInt64 := lowInt.Int64()
-	highInt64 := highInt.Int64()
+	lowInt64, _ := IPToInt64(low)
+	highInt64, _ := IPToInt64(high)
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
@@ -1205,13 +1243,17 @@ func (rdb *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 	}
 
 	id := ""
-	resultIP := net.IP{}
+	var resultIP net.IP
+	var err error
 
 	switch t := result.Member.(type) {
 	case string:
 		id = t
-		uIP := big.NewInt(int64(result.Score))
-		resultIP = IntToIP(uIP, IPv4Bits)
+		resultIP, err = Float64ToIP(result.Score)
+		if err != nil {
+			return nil, err
+		}
+
 	default:
 		return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
 	}
@@ -1283,13 +1325,13 @@ func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, er
 		}
 
 		id := ""
-		resultIP := net.IP{}
+		var resultIP net.IP
+		var err error
 
 		switch t := result.Member.(type) {
 		case string:
 			id = t
-			uIP := big.NewInt(int64(result.Score))
-			resultIP = IntToIP(uIP, IPv4Bits)
+			resultIP, err = Float64ToIP(result.Score)
 		default:
 			return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
 		}
@@ -1349,10 +1391,15 @@ func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, er
 }
 
 func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
-	intIPs := make([]int64, 0, len(ips))
-	for _, ip := range ips {
-		bInt, _ := IPToInt(ip)
-		intIPs = append(intIPs, bInt.Int64())
+	intIPs := make([]int64, len(ips))
+	for idx, ip := range ips {
+
+		aIP, err := IPToInt64(ip)
+		if err != nil {
+			return nil, err
+		}
+
+		intIPs[idx] = aIP
 	}
 
 	tx := rdb.Pipeline()
@@ -1498,9 +1545,7 @@ func (rdb *Client) Find(ip string) (string, error) {
 		return "", err
 	}
 
-	bigIntIP, _ := IPToInt(reqIP)
-
-	intIP := bigIntIP.Int64()
+	intIP, _ := IPToInt64(reqIP)
 
 	belowN, aboveN, err := rdb.neighboursInt(intIP, 1)
 	if err != nil {
@@ -1510,8 +1555,11 @@ func (rdb *Client) Find(ip string) (string, error) {
 	// this is enforced by the idempotent database initialization.
 	below, above := belowN[0], aboveN[0]
 
-	inRange := below.LowerBound && !below.UpperBound &&
-		!above.LowerBound && above.UpperBound
+	if below.Equal(above) && below.IP.Equal(reqIP) {
+		return below.Reason, nil
+	}
+
+	inRange := below.LowerBound && !below.UpperBound && !above.LowerBound && above.UpperBound
 
 	if inRange && below.Reason != above.Reason {
 		panic(fmt.Errorf(" '%s'.Reason != '%s'.Reason : '%s' != '%s'", below.ID, above.ID, below.Reason, above.Reason))

@@ -37,12 +37,11 @@ func (ia *IPAttributes) Equal(other *IPAttributes) bool {
 
 // IPInt64 returns the IP's int64 value
 func (ia *IPAttributes) IPInt64() int64 {
-	bigInt, bits := IPToInt(ia.IP)
-	// only working with IPv4
-	if bits > IPv4Bits {
-		panic("contained value is bigger than IPv4")
+	val, err := IPToInt64(ia.IP)
+	if err != nil {
+		panic(err)
 	}
-	return bigInt.Int64()
+	return val
 }
 
 // EqualIP returns true if the IPs of both are equal
