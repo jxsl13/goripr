@@ -18,8 +18,8 @@ func (a byAttributeIP) Less(i, j int) bool {
 		return false
 	}
 
-	aInt, _ := IPToInt64(a[i].IP)
-	bInt, _ := IPToInt64(a[j].IP)
+	aInt, _ := ipToInt64(a[i].IP)
+	bInt, _ := ipToInt64(a[j].IP)
 
 	return aInt < bInt
 }

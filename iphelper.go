@@ -76,8 +76,8 @@ func boundaries(ipRange string) (low, high net.IP, err error) {
 	return low, high, nil
 }
 
-// IPToInt64 returns th einteger representation of the passed IP
-func IPToInt64(ip net.IP) (int64, error) {
+// ipToInt64 returns th einteger representation of the passed IP
+func ipToInt64(ip net.IP) (int64, error) {
 	ipAddr, err := netaddr.NewIPAddress(ip)
 	if err != nil {
 		return 0, err
@@ -86,8 +86,8 @@ func IPToInt64(ip net.IP) (int64, error) {
 	return ipAddr.BigInt().Int64(), nil
 }
 
-// Int64ToIP returns an ip from the passed integer
-func Int64ToIP(i int64) (net.IP, error) {
+// int64ToIP returns an ip from the passed integer
+func int64ToIP(i int64) (net.IP, error) {
 	ipAddr, err := netaddr.NewIPAddress(i)
 	if err != nil {
 		return nil, err
@@ -96,8 +96,8 @@ func Int64ToIP(i int64) (net.IP, error) {
 	return ipAddr.IP(), nil
 }
 
-// Float64ToIP returns an ip from the passed integer
-func Float64ToIP(i float64) (net.IP, error) {
+// float64ToIP returns an ip from the passed integer
+func float64ToIP(i float64) (net.IP, error) {
 	ipAddr, err := netaddr.NewIPAddress(int64(i))
 	if err != nil {
 		return nil, err
@@ -106,8 +106,8 @@ func Float64ToIP(i float64) (net.IP, error) {
 	return ipAddr.IP(), nil
 }
 
-// IPToFloat64 returns th einteger representation of the passed IP
-func IPToFloat64(ip net.IP) (float64, error) {
+// ipToFloat64 returns th einteger representation of the passed IP
+func ipToFloat64(ip net.IP) (float64, error) {
 	ipAddr, err := netaddr.NewIPAddress(ip)
 	if err != nil {
 		return 0, err

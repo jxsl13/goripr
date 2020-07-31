@@ -37,7 +37,7 @@ func (ia *IPAttributes) Equal(other *IPAttributes) bool {
 
 // IPInt64 returns the IP's int64 value
 func (ia *IPAttributes) IPInt64() int64 {
-	val, err := IPToInt64(ia.IP)
+	val, err := ipToInt64(ia.IP)
 	if err != nil {
 		panic(err)
 	}

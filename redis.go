@@ -193,7 +193,7 @@ func (c *Client) insertBoundaries(boundaries []*IPAttributes) error {
 			id = boundary.ID
 		}
 
-		intIP, err := IPToInt64(boundary.IP)
+		intIP, err := ipToInt64(boundary.IP)
 		if err != nil {
 			return err
 		}
@@ -233,8 +233,8 @@ func (c *Client) Insert(ipRange, reason string) error {
 		return err
 	}
 
-	lowInt64, _ := IPToInt64(low)
-	highInt64, _ := IPToInt64(high)
+	lowInt64, _ := ipToInt64(low)
+	highInt64, _ := ipToInt64(high)
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
@@ -254,7 +254,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 	closestBelow := below[len(below)-1]
 	closestAbove := above[0]
 
-	ip, err := Int64ToIP(singleInt)
+	ip, err := int64ToIP(singleInt)
 	if err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 		} else if hitBoundary.LowerBound {
 			// must be single boundary, meaning a range with at least two members
 
-			ip, err := Int64ToIP(hitBoundary.IPInt64() + 1)
+			ip, err := int64ToIP(hitBoundary.IPInt64() + 1)
 			if err != nil {
 				return err
 			}
@@ -342,7 +342,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 
 		} else {
 			// hitBoundary.UpperBound
-			ip, err := Int64ToIP(hitBoundary.IPInt64() - 1)
+			ip, err := int64ToIP(hitBoundary.IPInt64() - 1)
 			if err != nil {
 				return err
 			}
@@ -396,7 +396,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 	} else if closestBelow.LowerBound && closestAbove.UpperBound &&
 		closestBelow.IsSingleBoundary() && closestAbove.IsSingleBoundary() {
 		// inside a range
-		ip, err := Int64ToIP(singleInt - 1)
+		ip, err := int64ToIP(singleInt - 1)
 		if err != nil {
 			return err
 		}
@@ -407,7 +407,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			UpperBound: true,
 		}
 
-		ip, err = Int64ToIP(singleInt + 1)
+		ip, err = int64ToIP(singleInt + 1)
 		if err != nil {
 			return err
 		}
@@ -513,7 +513,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 	belowLowerClosest := belowLowerBound[len(belowLowerBound)-1]
 	aboveUpperClosest := aboveUpperBound[0]
 
-	ip, err := Int64ToIP(lowInt64 - 1)
+	ip, err := int64ToIP(lowInt64 - 1)
 	if err != nil {
 		return err
 	}
@@ -525,7 +525,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		UpperBound: true,
 	}
 
-	ip, err = Int64ToIP(lowInt64)
+	ip, err = int64ToIP(lowInt64)
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		LowerBound: true,
 	}
 
-	ip, err = Int64ToIP(highInt64)
+	ip, err = int64ToIP(highInt64)
 	if err != nil {
 		return err
 	}
@@ -547,7 +547,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		UpperBound: true,
 	}
 
-	ip, err = Int64ToIP(highInt64 + 1)
+	ip, err = int64ToIP(highInt64 + 1)
 	if err != nil {
 		return err
 	}
@@ -1006,8 +1006,8 @@ func (c *Client) Remove(ipRange string) error {
 		return err
 	}
 
-	lowInt64, _ := IPToInt64(low)
-	highInt64, _ := IPToInt64(high)
+	lowInt64, _ := ipToInt64(low)
+	highInt64, _ := ipToInt64(high)
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
@@ -1277,7 +1277,7 @@ func (c *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 	switch t := result.Member.(type) {
 	case string:
 		id = t
-		resultIP, err = Float64ToIP(result.Score)
+		resultIP, err = float64ToIP(result.Score)
 		if err != nil {
 			return nil, err
 		}
@@ -1359,7 +1359,7 @@ func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, erro
 		switch t := result.Member.(type) {
 		case string:
 			id = t
-			resultIP, err = Float64ToIP(result.Score)
+			resultIP, err = float64ToIP(result.Score)
 			if err != nil {
 				return nil, err
 			}
@@ -1425,7 +1425,7 @@ func (c *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 	intIPs := make([]int64, len(ips))
 	for idx, ip := range ips {
 
-		aIP, err := IPToInt64(ip)
+		aIP, err := ipToInt64(ip)
 		if err != nil {
 			return nil, err
 		}
@@ -1576,7 +1576,7 @@ func (c *Client) Find(ip string) (string, error) {
 		return "", err
 	}
 
-	intIP, _ := IPToInt64(reqIP)
+	intIP, _ := ipToInt64(reqIP)
 
 	belowN, aboveN, err := c.neighboursInt(intIP, 1)
 	if err != nil {

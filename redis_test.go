@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xgfone/netaddr"
 	//"runtime"
 	//"strings"
-
-	"github.com/xgfone/netaddr"
 )
 
 type rangeReason struct {
@@ -80,6 +79,171 @@ var (
 
 	}
 )
+
+func TestClient_Insert(t *testing.T) {
+	// generate random ranges
+	initRanges(100)
+
+	// initial test
+	tests := []testCase{
+		{"cut below and cut above hit a boundary",
+			[]rangeReason{
+				{"123.0.0.0 - 123.0.0.2", "1st"},
+				{"123.0.0.4 - 123.0.0.6", "2nd"},
+				{"123.0.0.3", "3rd"},
+				{"123.0.0.1 - 123.0.0.5", "4th"},
+			},
+			false,
+		},
+		{"simple insert all", ranges, false},
+	}
+
+	// shuffle initial test to generate new tests
+	for i := 0; i < 10; i++ {
+		seed := time.Now().UnixNano()
+
+		shuffledRange := make([]rangeReason, len(ranges))
+		copy(shuffledRange, ranges)
+		shuffle(seed, shuffledRange)
+
+		tests = append(tests, testCase{
+			fmt.Sprintf("shuffle %d, seed=%d", i, seed),
+			shuffledRange,
+			false,
+		})
+	}
+
+	for idx, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			// consistency after every insert
+			for _, ipRange := range tt.ipRanges {
+
+				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
+					return
+				}
+
+				if !consistent(rdb, t, ipRange.Range, idx) {
+					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
+					return
+				}
+				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
+
+			}
+		})
+	}
+}
+
+func TestClient_Find(t *testing.T) {
+
+	tests := initTestCasesFind(10)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			for idx, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
+
+				if !consistent(rdb, t, rangeToFind, idx) {
+					t.Fatalf("database inconsistent")
+				}
+
+				got, err := rdb.Find(ipToFind)
+
+				if (err != nil) != tt.wantErr {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				if got != reasonToFind {
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					return
+				}
+			}
+
+		})
+	}
+}
+
+func TestClient_Remove(t *testing.T) {
+
+	tests := []testCaseFind{}
+
+	tests = append(tests, initTestCasesFind(10)...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			for idx, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					t.FailNow()
+				}
+
+				if !consistent(rdb, t, rangeToFind, idx) {
+					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
+					t.FailNow()
+				}
+				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
+
+				got, err := rdb.Find(ipToFind)
+
+				if err != nil {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				if got != reasonToFind {
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					t.FailNow()
+				}
+
+				err = rdb.Remove(rangeToFind)
+
+				if err != nil {
+					t.Errorf("rdb.Remove(), RETURED ERROR = %q", err)
+					t.FailNow()
+				}
+
+				if !consistent(rdb, t, "", 0) {
+					t.Errorf("rdb.Remove() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
+					t.FailNow()
+				}
+				t.Logf("rdb.Remove() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
+
+				_, err = rdb.Find(ipToFind)
+
+				// should not be found after range deletion
+				if err == nil {
+					t.Errorf("rdb.Find(),FOUND AFTER RANGE DELETION error = %q\nRange: %q IP: %s", err.Error(), rangeToFind, ipToFind)
+					t.FailNow()
+				}
+			}
+		})
+	}
+}
 
 type testCase struct {
 	name     string
@@ -244,8 +408,8 @@ func generateRange() (ipRange string, insideIP string) {
 	lower := net.First()
 	higher := net.Last()
 
-	lowerInt, _ := IPToInt64(lower.IP())
-	higherInt, _ := IPToInt64(higher.IP())
+	lowerInt, _ := ipToInt64(lower.IP())
+	higherInt, _ := ipToInt64(higher.IP())
 
 	between = generateBetween(lowerInt, higherInt)
 
@@ -253,7 +417,7 @@ func generateRange() (ipRange string, insideIP string) {
 		panic("invalid ip generated")
 	}
 
-	betweenIP, err := Int64ToIP(between)
+	betweenIP, err := int64ToIP(between)
 	if err != nil {
 		panic(err)
 	}
@@ -296,67 +460,6 @@ func initRanges(num int) {
 		ranges = append(ranges, rangeReason{
 			Range:  ipRange,
 			Reason: fmt.Sprintf("random %5d", i),
-		})
-	}
-}
-
-func TestClient_Insert(t *testing.T) {
-	// generate random ranges
-	initRanges(100)
-
-	// initial test
-	tests := []testCase{
-		{"cut below and cut above hit a boundary",
-			[]rangeReason{
-				{"123.0.0.0 - 123.0.0.2", "1st"},
-				{"123.0.0.4 - 123.0.0.6", "2nd"},
-				{"123.0.0.3", "3rd"},
-				{"123.0.0.1 - 123.0.0.5", "4th"},
-			},
-			false,
-		},
-		{"simple insert all", ranges, false},
-	}
-
-	// shuffle initial test to generate new tests
-	for i := 0; i < 10; i++ {
-		seed := time.Now().UnixNano()
-
-		shuffledRange := make([]rangeReason, len(ranges))
-		copy(shuffledRange, ranges)
-		shuffle(seed, shuffledRange)
-
-		tests = append(tests, testCase{
-			fmt.Sprintf("shuffle %d, seed=%d", i, seed),
-			shuffledRange,
-			false,
-		})
-	}
-
-	for idx, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rdb := initRDB(0)
-			defer rdb.Close()
-
-			// consistency after every insert
-			for _, ipRange := range tt.ipRanges {
-
-				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
-					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
-					return
-				}
-
-				if !consistent(rdb, t, ipRange.Range, idx) {
-					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
-					return
-				}
-				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
-
-			}
-
-			if err := rdb.Flush(); err != nil {
-				panic(err)
-			}
 		})
 	}
 }
@@ -422,112 +525,4 @@ func initTestCasesFind(num int) (testCases []testCaseFind) {
 		}
 	}
 	return
-}
-
-func TestClient_Find(t *testing.T) {
-
-	tests := initTestCasesFind(100)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			rdb := initRDB(0)
-			defer rdb.Close()
-
-			for idx, rir := range tt.ipRanges {
-				ipToFind := rir.IP
-				reasonToFind := rir.Reason
-				rangeToFind := rir.Range
-
-				err := rdb.Insert(rangeToFind, reasonToFind)
-				if err != nil {
-					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
-					return
-				}
-
-				if !consistent(rdb, t, rangeToFind, idx) {
-					t.Fatalf("database inconsistent")
-				}
-
-				got, err := rdb.Find(ipToFind)
-
-				if (err != nil) != tt.wantErr {
-					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
-					return
-				}
-
-				if got != reasonToFind {
-					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
-					return
-				}
-			}
-
-		})
-	}
-}
-
-func TestClient_Remove(t *testing.T) {
-
-	tests := []testCaseFind{}
-
-	tests = append(tests, initTestCasesFind(100)...)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			rdb := initRDB(0)
-			defer rdb.Close()
-
-			for idx, rir := range tt.ipRanges {
-				ipToFind := rir.IP
-				reasonToFind := rir.Reason
-				rangeToFind := rir.Range
-
-				err := rdb.Insert(rangeToFind, reasonToFind)
-				if err != nil {
-					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
-					t.FailNow()
-				}
-
-				if !consistent(rdb, t, rangeToFind, idx) {
-					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
-					t.FailNow()
-				}
-				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
-
-				got, err := rdb.Find(ipToFind)
-
-				if err != nil {
-					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
-					return
-				}
-
-				if got != reasonToFind {
-					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
-					t.FailNow()
-				}
-
-				err = rdb.Remove(rangeToFind)
-
-				if err != nil {
-					t.Errorf("rdb.Remove(), RETURED ERROR = %q", err)
-					t.FailNow()
-				}
-
-				if !consistent(rdb, t, "", 0) {
-					t.Errorf("rdb.Remove() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
-					t.FailNow()
-				}
-				t.Logf("rdb.Remove() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
-
-				_, err = rdb.Find(ipToFind)
-
-				// should not be found after range deletion
-				if err == nil {
-					t.Errorf("rdb.Find(),FOUND AFTER RANGE DELETION error = %q\nRange: %q IP: %s", err.Error(), rangeToFind, ipToFind)
-					t.FailNow()
-				}
-			}
-		})
-	}
 }
