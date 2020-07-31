@@ -818,7 +818,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		return err
 	}
 
-	newRangeBoundaries := []*IPAttributes{}
+	var newRangeBoundaries []*IPAttributes
 
 	if insideMostLeft.LowerBound && insideMostRight.UpperBound {
 		// insideMostLeft.LowerBound && insideMostRight.UpperBound
