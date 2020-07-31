@@ -14,13 +14,6 @@ var (
 	ipRegex      = regexp.MustCompile(`([0-9a-f:.]{7,41})`)
 )
 
-const (
-	// IPv4Bits is the number of occupied bits by IPv4
-	IPv4Bits = 32
-	// IPv6Bits is the number of occupied bits by IPv6
-	IPv6Bits = 128
-)
-
 // boundaries returns the lower and upper bound of a given range string
 func boundaries(ipRange string) (low, high net.IP, err error) {
 
