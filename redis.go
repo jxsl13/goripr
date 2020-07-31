@@ -2,7 +2,6 @@ package goripr
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -1229,9 +1228,7 @@ func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*
 
 	for _, result := range belowResults {
 		attr, err := c.fetchIPAttributes(result)
-		if errors.Is(err, ErrLowerBoundary) {
-			attr = globalLowerBoundary
-		} else if err != nil {
+		if err != nil {
 			return nil, nil, err
 		}
 
@@ -1247,9 +1244,7 @@ func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*
 
 	for _, result := range aboveResults {
 		attr, err := c.fetchIPAttributes(result)
-		if errors.Is(err, ErrUpperBoundary) {
-			attr = globalUpperBoundary
-		} else if err != nil {
+		if err != nil {
 			return nil, nil, err
 		}
 
@@ -1597,7 +1592,7 @@ func (c *Client) Find(ip string) (string, error) {
 	}
 
 	if !inRange {
-		return "", ErrIPNotFoundInAnyRange
+		return "", ErrIPNotFound
 	}
 
 	if below.Reason == DeleteReason {
