@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -90,6 +91,7 @@ type Options struct {
 // Client is an extended version of the redis.Client
 type Client struct {
 	rdb *redis.Client
+	mu  sync.RWMutex
 }
 
 // NewClient creates a new redi client connection
@@ -130,7 +132,7 @@ func NewClient(options Options) (*Client, error) {
 	}
 
 	client := &Client{
-		rdb,
+		rdb: rdb,
 	}
 
 	err = client.init()
@@ -183,14 +185,19 @@ func (c *Client) Close() error {
 
 // Flush removes all of the database content including the global bounadaries.
 func (c *Client) Flush() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	_, err := c.rdb.FlushDB().Result()
 	return err
 }
 
 // Reset the database except for its global boundaries
 func (c *Client) Reset() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if err := c.Flush(); err != nil {
+	if _, err := c.rdb.FlushDB().Result(); err != nil {
 		return err
 	}
 	return c.init()
@@ -517,6 +524,9 @@ func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above [
 
 // Insert inserts a new IP range or IP into the database with an associated reason string
 func (c *Client) Insert(ipRange, reason string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	low, high, err := parseRange(ipRange, reason)
 	if err != nil {
 		return err
@@ -588,6 +598,9 @@ func (c *Client) Insert(ipRange, reason string) error {
 
 // Remove removes an IP range from the database.
 func (c *Client) Remove(ipRange string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	low, high, err := parseRange(ipRange, "")
 
 	if err != nil {
@@ -648,6 +661,9 @@ func (c *Client) Remove(ipRange string) error {
 // Find searches for the requested IP in the database. If the IP is found within any previously inserted range,
 // the associated reason is returned. If it is not found, an error is returned instead.
 func (c *Client) Find(ip string) (reason string, err error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	ipaddr, err := netaddr.NewIPAddress(ip, 4)
 	if err != nil {
 		return "", err
