@@ -27,3 +27,4 @@ The compromise should be a slower reaction time compared to the triavial approac
  -Add a cleanup function that removes single `UpperBound`s that are followed by `LowerBound`s sharing the exact same reason string (will be more complex, as we support single value ranges)
  -Only expose the functions `Find`, `Insert`, `Remove`, `Optimize/Clean`, encapsulate the redis client and don't give access.
  -As Redis database requests that require reading and writing of data are NOT atomic, the package will have to implement a RWMutex for somewhat making this at least within on application, that uses this package, atomic.
+ -IMPROVEMENT: It should be enough to retriebe all members inside(needed in order to remove the associated properties) the new to be inserted range, two neighbours above, two below (might even not need one IP below the `LowerBound` and one IP above the `UpperBound`)
