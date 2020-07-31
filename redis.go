@@ -1464,7 +1464,7 @@ func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 				high = t
 			}
 
-			if low == false && low == high {
+			if !low && low == high {
 				result = append(result, nil)
 				continue
 			}
