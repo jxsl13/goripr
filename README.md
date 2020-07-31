@@ -22,10 +22,6 @@ The compromise should be a slower reaction time compared to the triavial approac
 ## TODO
 
 - Cache requested IPs for like 24 hours in order to improve response time performance for recurring requests (rejoining players)
-- The current implementation is too complex and has too many cases, should be refactored in any case.
-- These many cases and rather messy implementation lead to too many unneeded database requests that could be removed to improve performance
 - Add a `Clean/Sweep/Vacuum` function that removes single `UpperBound`s that are followed by `LowerBound`s sharing the exact same reason string (will be more complex, as we support single value ranges)
-- Only expose the functions `Find`, `Insert`, `Remove`, `Optimize/Clean`, encapsulate the redis client and don't give access.
 - As Redis database requests that require reading and writing of data are NOT atomic, the package will have to implement a RWMutex in order to somewhat make atomic within the package.
-- IMPROVEMENT: It should be enough to retriebe all members inside(needed in order to remove the associated properties) the new to be inserted range, two neighbours above, two below (might even not need one IP below the `LowerBound` and one IP above the `UpperBound`)
 - `Sweep` automatically when inserting, especially if the new range completely lies within a bigger already existing range. All that's needed are the neighbours of the range.
