@@ -1443,8 +1443,8 @@ func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 			}
 
 			reason := ""
-			switch t := attr[0].(type) {
-			case string:
+
+			if t, ok := attr[0].(string); ok {
 				reason = t
 			}
 
