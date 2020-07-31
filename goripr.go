@@ -8,12 +8,6 @@ var (
 	// DeleteReason is given to a specific deltion range
 	// on a second attept (not aromic) the range is then finally deleted.
 	DeleteReason = "_________________DELETE_________________"
-
-	// globalLowerBoundary is the smallest value possible that indicates the lower boundary of the IP set
-	globalLowerBoundary = &ipAttributes{ID: "-inf", LowerBound: false, UpperBound: true}
-
-	//globalUpperBoundary is the biggest value possible that indicates the upper boundary of the IP set
-	globalUpperBoundary = &ipAttributes{ID: "+inf", LowerBound: true, UpperBound: false}
 )
 
 const (
@@ -23,6 +17,9 @@ const (
 
 	// ErrDatabaseInit is returned when the initialization of the database boundaries fails.
 	ErrDatabaseInit = Error("failed to initialize database ±inf boundaries")
+
+	// ErrDatabaseInconsistent is returned when the initialization of the database boundaries fails.
+	ErrDatabaseInconsistent = Error("the databe is in an inconsistent state")
 
 	// ErrInvalidRange is returned when a passed string is not a valid range
 	ErrInvalidRange = Error("invalid range passed, use either of these: <IP>, <IP>/<0-32>, <IP> - <IP>")
@@ -39,3 +36,8 @@ const (
 	// ErrIPNotFound is returned if the passed IP is not contained in any ranges
 	ErrIPNotFound = Error("the given IP was not found in any database ranges")
 )
+
+// Error is a wrapper for constant errors that are not supposed to be changed.
+type Error string
+
+func (e Error) Error() string { return string(e) }

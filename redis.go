@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"regexp"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis"
+	"github.com/xgfone/netaddr"
+)
+
+var (
+	customIPRangeRegex = regexp.MustCompile(`([0-9a-f:.]{7,41})\s*-\s*([0-9a-f:.]{7,41})`)
 )
 
 // Options configures the redis database connection
@@ -142,7 +147,9 @@ func (c *Client) init() error {
 	// idempotent and important to mark these boundaries
 	// we always want to have the infinite boundaries available in order to tell,
 	// that there are no more elements below or above some other element.
-	_, err := c.rdb.ZAdd(IPRangesKey,
+	tx := c.rdb.TxPipeline()
+
+	tx.ZAdd(IPRangesKey,
 		redis.Z{
 			Score:  math.Inf(-1),
 			Member: "-inf",
@@ -151,7 +158,20 @@ func (c *Client) init() error {
 			Score:  math.Inf(+1),
 			Member: "+inf",
 		},
-	).Result()
+	)
+
+	tx.HMSet("-inf", map[string]interface{}{
+		"low":    false,
+		"high":   true,
+		"reason": "-inf",
+	})
+
+	tx.HMSet("+inf", map[string]interface{}{
+		"low":    true,
+		"high":   false,
+		"reason": "+inf",
+	})
+	_, err := tx.Exec()
 
 	return err
 }
@@ -176,1428 +196,524 @@ func (c *Client) Reset() error {
 	return c.init()
 }
 
-// insertBoundaries does not do any range checks, allowing for a little bit more performance
-// Side effect: if boundary.ID == "" -> it gets a new UUID
-func (c *Client) insertBoundaries(boundaries []*ipAttributes) error {
+// all retrieves all range boundaries that are within the database.
+func (c *Client) all() (inside []boundary, err error) {
 
-	tx := c.rdb.TxPipeline()
-	// fill transaction
-	for _, boundary := range boundaries {
-		id := ""
-		if boundary.ID == "" {
-
-			id = boundary.IP.String()
-			boundary.ID = id
-		} else {
-			id = boundary.ID
-		}
-
-		intIP, err := ipToInt64(boundary.IP)
-		if err != nil {
-			return err
-		}
-
-		// insert into sorted set
-		tx.ZAdd(IPRangesKey,
-			redis.Z{
-				Score:  float64(intIP),
-				Member: id,
-			},
-		)
-
-		if boundary.LowerBound {
-			tx.HSet(id, "low", true)
-		}
-
-		if boundary.UpperBound {
-			tx.HSet(id, "high", true)
-		}
-
-		tx.HSet(id, "reason", boundary.Reason)
-	}
-
-	//execute transaction
-	_, err := tx.Exec()
-
-	return err
-}
-
-// Insert safely inserts a new range into the database.
-// Bigger ranges are sliced into smaller ranges if the Reason strings differ.
-// If the reason strings are equal, ranges are expanded as expected.
-func (c *Client) Insert(ipRange, reason string) error {
-	low, high, err := boundaries(ipRange)
-
-	if err != nil {
-		return err
-	}
-
-	lowInt64, _ := ipToInt64(low)
-	highInt64, _ := ipToInt64(high)
-
-	if lowInt64 == highInt64 {
-		// edge case, range is single value
-		return c.insertSingleInt(lowInt64, reason)
-	}
-
-	return c.insertRangeInt(lowInt64, highInt64, reason)
-}
-
-func (c *Client) insertSingleInt(singleInt int64, reason string) error {
-
-	below, above, err := c.neighboursInt(singleInt, 1)
-	if err != nil {
-		return err
-	}
-
-	closestBelow := below[len(below)-1]
-	closestAbove := above[0]
-
-	ip, err := int64ToIP(singleInt)
-	if err != nil {
-		return err
-	}
-
-	singleBoundary := &ipAttributes{
-		IP:         ip,
-		Reason:     reason,
-		LowerBound: true,
-		UpperBound: true,
-	}
-
-	if closestBelow.Equal(closestAbove) {
-
-		// hittig an edge / a boundary directly
-		hitBoundary := closestBelow
-
-		// remove the hit boundary
-		err := c.removeIDs(hitBoundary.ID)
-		if err != nil {
-			return err
-		}
-
-		if !hitBoundary.IsSingleBoundary() {
-			// hit a single value range
-			// simply replace it
-
-			newRange := []*ipAttributes{
-				singleBoundary,
-			}
-
-			return c.insertBoundaries(newRange)
-
-		} else if hitBoundary.LowerBound {
-			// must be single boundary, meaning a range with at least two members
-
-			ip, err := int64ToIP(hitBoundary.IPInt64() + 1)
-			if err != nil {
-				return err
-			}
-
-			cutAbove := &ipAttributes{
-				IP:         ip,
-				Reason:     hitBoundary.Reason,
-				LowerBound: true,
-			}
-
-			// default case
-			newRange := []*ipAttributes{
-				singleBoundary,
-				cutAbove,
-			}
-
-			boundaries, err := c.fetchBoundaries(cutAbove.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutAbove := (*ipAttributes)(nil)
-			if len(boundaries) == 1 {
-				hitCutAbove = boundaries[0]
-			}
-
-			if hitCutAbove != nil {
-				// when we try to cut the range above, but hit the upper boundary
-				// the upper boundary becomes a single value range
-				if !hitCutAbove.UpperBound {
-					panic("Database inconsistent!")
-				}
-				// must be an upper boundary
-
-				// shrink range above to single value range
-				_, err := c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// remove cut, as there is no cutting of the range above
-				// needed anymore.
-				newRange = []*ipAttributes{
-					singleBoundary,
-				}
-			}
-
-			return c.insertBoundaries(newRange)
-
-		} else {
-			// hitBoundary.UpperBound
-			ip, err := int64ToIP(hitBoundary.IPInt64() - 1)
-			if err != nil {
-				return err
-			}
-			cutBelow := &ipAttributes{
-				IP:         ip,
-				Reason:     hitBoundary.Reason,
-				UpperBound: true,
-			}
-
-			boundaries, err := c.fetchBoundaries(cutBelow.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutBelow := (*ipAttributes)(nil)
-			if len(boundaries) == 1 {
-				hitCutBelow = boundaries[0]
-			}
-
-			// default case
-			newRange := []*ipAttributes{
-				cutBelow,
-				singleBoundary,
-			}
-
-			// case in which the range only contains two values
-			if hitCutBelow != nil {
-				// when we try to cut the range below, but hit the lower boundary
-				// the lower boundary becomes a single value range
-				if !hitCutBelow.LowerBound {
-					panic("Database inconsistent!")
-				}
-				// must be an lower boundary
-
-				// shrink range above to single value range
-				_, err := c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// remove cut, as there is no cutting of the range above
-				// needed anymore.
-				newRange = []*ipAttributes{
-					singleBoundary,
-				}
-			}
-
-			return c.insertBoundaries(newRange)
-		}
-
-	} else if closestBelow.LowerBound && closestAbove.UpperBound &&
-		closestBelow.IsSingleBoundary() && closestAbove.IsSingleBoundary() {
-		// inside a range
-		ip, err := int64ToIP(singleInt - 1)
-		if err != nil {
-			return err
-		}
-
-		cutBelow := &ipAttributes{
-			IP:         ip,
-			Reason:     closestBelow.Reason,
-			UpperBound: true,
-		}
-
-		ip, err = int64ToIP(singleInt + 1)
-		if err != nil {
-			return err
-		}
-
-		cutAbove := &ipAttributes{
-			IP:         ip,
-			Reason:     closestAbove.Reason,
-			LowerBound: true,
-		}
-
-		// default case
-		newRange := []*ipAttributes{
-			cutBelow,
-			singleBoundary,
-			cutAbove,
-		}
-
-		boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
-		if err != nil {
-			return err
-		}
-
-		hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
-		if len(boundaries) == 2 {
-			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
-		}
-
-		if hitCutBelow != nil && hitCutAbove != nil {
-			tx := c.rdb.TxPipeline()
-
-			// cutting above single value range
-			// lower bound gets high attribute
-			c.rdb.HSet(hitCutBelow.ID, "high", true)
-
-			// cutting below single value range
-			// upper bound gets low attribute
-			c.rdb.HSet(hitCutAbove.ID, "low", true)
-
-			_, err = tx.Exec()
-			if err != nil {
-				return err
-			}
-
-			// no cutting needed
-			newRange = []*ipAttributes{
-				singleBoundary,
-			}
-
-		} else if hitCutBelow != nil {
-			// only hitCutBelow
-
-			// boundary below becomes a single value range
-			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// only cutting above needed
-			newRange = []*ipAttributes{
-				singleBoundary,
-				cutAbove,
-			}
-
-		} else if hitCutAbove != nil {
-			// only hitCutAbove
-
-			// boundary above becomes a single value range
-			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// only cutting below needed
-			newRange = []*ipAttributes{
-				cutBelow,
-				singleBoundary,
-			}
-		}
-
-		return c.insertBoundaries(newRange)
-	}
-
-	// not on boundary or inside a range
-	newRange := []*ipAttributes{singleBoundary}
-
-	return c.insertBoundaries(newRange)
-}
-
-// insertRangeInt properly inserts new ranges into the database, removing other ranges, cutting them, shrinking them, etc.
-func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error {
-
-	inside, err := c.insideIntRange(lowInt64, highInt64)
-	if err != nil {
-		return err
-	}
-
-	belowLowerBound, aboveUpperBound, err := c.belowLowerAboveUpper(lowInt64, highInt64, 2)
-	if err != nil {
-		return err
-	}
-
-	// todo check if this lies outside of the range
-	belowLowerClosest := belowLowerBound[len(belowLowerBound)-1]
-	aboveUpperClosest := aboveUpperBound[0]
-
-	ip, err := int64ToIP(lowInt64 - 1)
-	if err != nil {
-		return err
-	}
-
-	// todo: move cuts to their respective positions
-	cutBelow := &ipAttributes{
-		IP:         ip,
-		Reason:     belowLowerClosest.Reason,
-		UpperBound: true,
-	}
-
-	ip, err = int64ToIP(lowInt64)
-	if err != nil {
-		return err
-	}
-
-	lowerBound := &ipAttributes{
-		IP:         ip,
-		Reason:     reason,
-		LowerBound: true,
-	}
-
-	ip, err = int64ToIP(highInt64)
-	if err != nil {
-		return err
-	}
-
-	upperBound := &ipAttributes{
-		IP:         ip,
-		Reason:     reason,
-		UpperBound: true,
-	}
-
-	ip, err = int64ToIP(highInt64 + 1)
-	if err != nil {
-		return err
-	}
-
-	cutAbove := &ipAttributes{
-		IP:         ip,
-		Reason:     aboveUpperClosest.Reason,
-		LowerBound: true,
-	}
-
-	// if cutAbove.EqualIP(aboveUpperClosest) {
-	// 	runtime.Breakpoint()
-	// }
-	lenInside := len(inside)
-
-	if lenInside == 0 {
-		// nothin inside range
-
-		var newRangeBoundaries []*ipAttributes
-
-		if belowLowerClosest.LowerBound && aboveUpperClosest.UpperBound &&
-			belowLowerClosest.IsSingleBoundary() && aboveUpperClosest.IsSingleBoundary() {
-			// our new range is within a bigger range
-			// len(inside) == 0 => outside range is connected
-
-			// default case
-			newRangeBoundaries = []*ipAttributes{
-				cutBelow,
-				lowerBound,
-				upperBound,
-				cutAbove,
-			}
-
-			boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
-
-			if len(boundaries) == 2 {
-				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
-			}
-
-			if hitCutBelow != nil && hitCutAbove != nil {
-				// hit lower & upper boundary
-				tx := c.rdb.TxPipeline()
-				tx.HSet(hitCutBelow.ID, "high", true)
-				tx.HSet(hitCutAbove.ID, "low", true)
-
-				_, err = tx.Exec()
-				if err != nil {
-					return err
-				}
-
-				// hit both boundaries, insert only new range
-				newRangeBoundaries = []*ipAttributes{
-					lowerBound,
-					upperBound,
-				}
-
-			} else if hitCutBelow != nil {
-				// only hit lower boundary
-				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// insert everything except lower cut
-				newRangeBoundaries = []*ipAttributes{
-					lowerBound,
-					upperBound,
-					cutAbove,
-				}
-			} else if hitCutAbove != nil {
-				// only hit upper boundary
-				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// insert everything except upper cut
-				newRangeBoundaries = []*ipAttributes{
-					cutBelow,
-					lowerBound,
-					upperBound,
-				}
-			}
-
-		} else {
-			//belowLowerClosest.UpperBound && aboveUpperClosest.LowerBound {
-			// case 1: set empty, infinite boundaries guarantee
-			// the existence of at least one neighbour to each side
-			// case 2: inserting into empty space in between other ranges
-			// belowLowerClosest != aboveUpperClosest, because len(inside) == 0
-			// case 3: -inf below & other range above OR other range below & +inf above
-
-			newRangeBoundaries = []*ipAttributes{
-				lowerBound,
-				upperBound,
-			}
-		}
-
-		// sets boundaries below and above out to be inserted range
-		return c.insertBoundaries(newRangeBoundaries)
-	}
-
-	// lenInside > 0
-
-	insideMostLeft := inside[0]
-	insideMostRight := inside[lenInside-1]
-
-	if lenInside%2 == 0 {
-
-		// default case, cut two ranges
-		newRange := []*ipAttributes{
-			cutBelow,
-			lowerBound,
-			upperBound,
-			cutAbove,
-		}
-
-		// even number of boundaries inside of the range
-
-		if insideMostLeft.LowerBound && insideMostRight.UpperBound {
-			// all ranges are inside of the new range.
-			// meaning they are smaller and can be replaced by the new bigger range
-
-			newRange = []*ipAttributes{
-				lowerBound,
-				upperBound,
-			}
-
-		} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
-			insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
-
-			boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
-
-			if len(boundaries) == 2 {
-				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
-			}
-
-			if hitCutBelow != nil && hitCutAbove != nil {
-				tx := c.rdb.TxPipeline()
-
-				// cutting above single value range
-				// lower bound gets high attribute
-				c.rdb.HSet(hitCutBelow.ID, "high", true)
-
-				// cutting below single value range
-				// upper bound gets low attribute
-				c.rdb.HSet(hitCutAbove.ID, "low", true)
-
-				_, err = tx.Exec()
-				if err != nil {
-					return err
-				}
-
-				// no cutting needed
-				newRange = []*ipAttributes{
-					lowerBound,
-					upperBound,
-				}
-
-			} else if hitCutBelow != nil {
-				// only hitCutBelow
-
-				// boundary below becomes a single value range
-				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// only cutting above needed
-				newRange = []*ipAttributes{
-					lowerBound,
-					upperBound,
-					cutAbove,
-				}
-
-			} else if hitCutAbove != nil {
-				// only hitCutAbove
-
-				// boundary above becomes a single value range
-				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// only cutting below needed
-				newRange = []*ipAttributes{
-					cutBelow,
-					lowerBound,
-					upperBound,
-				}
-			}
-
-			// default value from above is used instead
-
-		} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
-
-			// default: nothing below the lower bound is hit when cutting
-			newRange = []*ipAttributes{
-				cutBelow,
-				lowerBound,
-				upperBound,
-			}
-
-			boundaries, err := c.fetchBoundaries(cutBelow.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutBelow := (*ipAttributes)(nil)
-			if len(boundaries) == 1 {
-				hitCutBelow = boundaries[0]
-
-			}
-
-			if hitCutBelow != nil {
-				// only hitCutBelow
-
-				// boundary below becomes a single value range
-				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// no cutting needed
-				newRange = []*ipAttributes{
-					lowerBound,
-					upperBound,
-				}
-			}
-		} else {
-			// insideMostRight.LowerBound && insideMostRight.IsSingleBoundary()
-
-			// default: nothing below the lower bound is hit when cutting
-			newRange = []*ipAttributes{
-				lowerBound,
-				upperBound,
-				cutAbove,
-			}
-
-			boundaries, err := c.fetchBoundaries(cutAbove.IP)
-			if err != nil {
-				return err
-			}
-
-			hitCutAbove := (*ipAttributes)(nil)
-
-			if len(boundaries) == 1 {
-				hitCutAbove = boundaries[0]
-			}
-
-			if hitCutAbove != nil {
-				// only hitCutAbove
-
-				// boundary below becomes a single value range
-				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-				if err != nil {
-					return err
-				}
-
-				// no cutting needed
-				newRange = []*ipAttributes{
-					lowerBound,
-					upperBound,
-				}
-			}
-		}
-
-		// delete all inside boundaries
-		err = c.removeIDs(idsOf(inside)...)
-		if err != nil {
-			return err
-		}
-
-		// insert lower cut, new range, upper cut boundary
-		// depending on what is actually in the newRange
-		return c.insertBoundaries(newRange)
-	}
-
-	// lenInside % 2 == 1
-	// odd number of ranges inside the new range
-
-	// delete all boundaries inside
-	// of the new to be inserted range
-	err = c.removeIDs(idsOf(inside)...)
-	if err != nil {
-		return err
-	}
-
-	var newRangeBoundaries []*ipAttributes
-
-	if insideMostLeft.LowerBound && insideMostRight.UpperBound {
-		// insideMostLeft.LowerBound && insideMostRight.UpperBound
-		// nothing to cut, everything lies inside of the range
-		newRangeBoundaries = []*ipAttributes{
-			lowerBound,
-			upperBound,
-		}
-	} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
-		insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
-		newRangeBoundaries = []*ipAttributes{
-			cutBelow,
-			lowerBound,
-			upperBound,
-			cutAbove,
-		}
-
-		boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
-		if err != nil {
-			return err
-		}
-
-		hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
-
-		if len(boundaries) == 2 {
-			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
-		}
-
-		if hitCutBelow != nil && hitCutAbove != nil {
-			// hit lower & upper boundary
-			tx := c.rdb.TxPipeline()
-			tx.HSet(hitCutBelow.ID, "high", true)
-			tx.HSet(hitCutAbove.ID, "low", true)
-
-			_, err = tx.Exec()
-			if err != nil {
-				return err
-			}
-
-			// hit both boundaries, insert only new range
-			newRangeBoundaries = []*ipAttributes{
-				lowerBound,
-				upperBound,
-			}
-
-		} else if hitCutBelow != nil {
-			// only hit lower boundary
-			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// insert everything except lower cut
-			newRangeBoundaries = []*ipAttributes{
-				lowerBound,
-				upperBound,
-				cutAbove,
-			}
-		} else if hitCutAbove != nil {
-			// only hit upper boundary
-			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// insert everything except upper cut
-			newRangeBoundaries = []*ipAttributes{
-				cutBelow,
-				lowerBound,
-				upperBound,
-			}
-		}
-
-	} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
-		// the range at the lower end of the new range is partially
-		// inside and partially outside the new range
-
-		// default case if not hit anything while cutting
-		newRangeBoundaries = []*ipAttributes{
-			cutBelow,
-			lowerBound,
-			upperBound,
-		}
-
-		boundaries, err := c.fetchBoundaries(cutBelow.IP)
-		if err != nil {
-			return err
-		}
-
-		hitCutBelow := (*ipAttributes)(nil)
-
-		if len(boundaries) == 1 {
-			hitCutBelow = boundaries[0]
-		}
-
-		if hitCutBelow != nil {
-			// only hit lower boundary
-			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// only insert new range boundaries
-			newRangeBoundaries = []*ipAttributes{
-				lowerBound,
-				upperBound,
-			}
-		}
-
-	} else {
-		// insideMostRight.LowerBound && insideMostRight.IsSingleBoundary()
-
-		// the range at the upper end of the new range that is to be inserted
-		// is partially inside and partially outside the new range
-
-		// default case that we do not hit anything when cutting above our new range
-		newRangeBoundaries = []*ipAttributes{
-			lowerBound,
-			upperBound,
-			cutAbove,
-		}
-
-		boundaries, err := c.fetchBoundaries(cutAbove.IP)
-		if err != nil {
-			return err
-		}
-
-		hitCutAbove := (*ipAttributes)(nil)
-
-		if len(boundaries) == 1 {
-			hitCutAbove = boundaries[0]
-		}
-
-		if hitCutAbove != nil {
-			// only hit boundary above upper boundary
-			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
-			if err != nil {
-				return err
-			}
-
-			// only insert new range boundaries
-			newRangeBoundaries = []*ipAttributes{
-				lowerBound,
-				upperBound,
-			}
-		}
-	}
-
-	return c.insertBoundaries(newRangeBoundaries)
-}
-
-// Remove removes a range from the set
-func (c *Client) Remove(ipRange string) error {
-	low, high, err := boundaries(ipRange)
-
-	if err != nil {
-		return err
-	}
-
-	lowInt64, _ := ipToInt64(low)
-	highInt64, _ := ipToInt64(high)
-
-	if lowInt64 == highInt64 {
-		// edge case, range is single value
-		err = c.insertSingleInt(lowInt64, DeleteReason)
-		if err != nil {
-			return err
-		}
-	}
-
-	err = c.insertRangeInt(lowInt64, highInt64, DeleteReason)
-	if err != nil {
-		return err
-	}
-
-	// get IDs of boundaries within given range
-	boundaryIDs, err := c.insideIntIDs(lowInt64, highInt64)
-
-	if err != nil {
-		return err
-	}
-
-	// remove from sorted set and from attribute map
-	return c.removeIDs(boundaryIDs...)
-}
-
-// insideIntIDs returns a list of range boundary IDs that lie within lowInt64 through highInt64.
-// including these two boundaries.
-func (c *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
-	tx := c.rdb.TxPipeline()
-
-	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min: strconv.FormatInt(lowInt64, 10),
-		Max: strconv.FormatInt(highInt64, 10),
-	})
-
-	_, err := tx.Exec()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	insideResults, err := cmdInside.Result()
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	// force sorting
-	sort.Sort(byScore(insideResults))
-
-	ret := make([]string, 0, len(insideResults))
-
-	for _, result := range insideResults {
-		switch t := result.Member.(type) {
-		case string:
-			ret = append(ret, t)
-		default:
-			return nil, fmt.Errorf("invalid type of member ID in method insideIntIDs: %T", result.Member)
-		}
-	}
-
-	return ret, nil
-}
-
-// insideIntRange does not do any checks or ip conversions to be reusable
-func (c *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*ipAttributes, err error) {
-	inside = make([]*ipAttributes, 0, 3)
-
-	tx := c.rdb.TxPipeline()
-
-	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min: strconv.FormatInt(lowInt64, 10),
-		Max: strconv.FormatInt(highInt64, 10),
-	})
-
-	_, err = tx.Exec()
-
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	insideResults, err := cmdInside.Result()
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	for _, result := range insideResults {
-		attr, err := c.fetchIPAttributes(result)
-		if err != nil {
-			return nil, err
-		}
-
-		inside = append(inside, attr)
-	}
-
-	sort.Sort(byAttributeIP(inside))
-	return
-}
-
-// insideInfRange returns all ranges
-func (c *Client) insideInfRange() (inside []*ipAttributes, err error) {
-	inside = make([]*ipAttributes, 0, 3)
-
-	tx := c.rdb.TxPipeline()
-
-	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+	results, err := c.rdb.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min: "-inf",
 		Max: "+inf",
-	})
+	}).Result()
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, result := range results {
+		bnd := newBoundary(result.Score, "", false, false)
+		inside = append(inside, bnd)
+	}
+
+	tx := c.rdb.TxPipeline()
+
+	cmds := make([]*redis.SliceCmd, 0, len(inside))
+	for _, bnd := range inside {
+		cmd := bnd.Get(tx)
+		cmds = append(cmds, cmd)
+	}
 
 	_, err = tx.Exec()
-
 	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		return nil, err
 	}
 
-	insideResults, err := cmdInside.Result()
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	for _, result := range insideResults {
-		attr, err := c.fetchIPAttributes(result)
+	for idx, cmd := range cmds {
+		result, err := cmd.Result()
 		if err != nil {
 			return nil, err
 		}
 
-		inside = append(inside, attr)
+		if len(result) != 3 {
+			panic("database inconsistent")
+		}
+
+		low := false
+		switch t := result[0].(type) {
+		case string:
+			low = t == "1"
+		default:
+			low = false
+		}
+
+		high := false
+		switch t := result[1].(type) {
+		case string:
+			high = t == "1"
+		default:
+			high = false
+		}
+
+		reason := ""
+		switch t := result[2].(type) {
+		case string:
+			reason = t
+		default:
+			reason = ""
+		}
+
+		inside[idx].LowerBound = low
+		inside[idx].UpperBound = high
+		inside[idx].Reason = reason
 	}
 
-	sort.Sort(byAttributeIP(inside))
-	return
-}
-
-func (c *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*ipAttributes, err error) {
-
-	tx := c.rdb.TxPipeline()
-
-	cmdBelowLower := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    "-inf",
-		Max:    strconv.FormatInt(lower-1, 10),
-		Offset: 0,
-		Count:  num,
-	})
-
-	cmdAboveUpper := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    strconv.FormatInt(upper+1, 10),
-		Max:    "+inf",
-		Offset: 0,
-		Count:  num,
-	})
-
-	_, err = tx.Exec()
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	belowLowerResults, err := cmdBelowLower.Result()
-
-	// inverse slice to have the order from -inf .... +inf
-	for i, j := 0, len(belowLowerResults)-1; i < j; i, j = i+1, j-1 {
-		belowLowerResults[i], belowLowerResults[j] = belowLowerResults[j], belowLowerResults[i]
-	}
-
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	aboveUpperResults, err := cmdAboveUpper.Result()
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	belowLower, err = c.fetchAllIPAttributes(belowLowerResults...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	aboveUpper, err = c.fetchAllIPAttributes(aboveUpperResults...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	return
+	sort.Sort(byIP(inside))
+	return inside, nil
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
-func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*ipAttributes, err error) {
+func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above []boundary, err error) {
 
-	below = make([]*ipAttributes, 0, numNeighbours)
-	above = make([]*ipAttributes, 0, numNeighbours)
+	if num < 0 {
+		panic("passed num parameter has to be >= 0")
+	}
+
+	below = make([]boundary, 0, num)
+	inside = make([]boundary, 0, 1)
+	above = make([]boundary, 0, num)
 
 	tx := c.rdb.TxPipeline()
 
 	cmdBelow := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min:    "-inf",
-		Max:    strconv.FormatInt(ofIP, 10),
+		Max:    low.Below().Int64String(),
 		Offset: 0,
-		Count:  int64(numNeighbours),
+		Count:  num,
+	})
+
+	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+		Min: low.Int64String(),
+		Max: high.Int64String(),
 	})
 
 	cmdAbove := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
-		Min:    strconv.FormatInt(ofIP, 10),
+		Min:    high.Above().Int64String(),
 		Max:    "+inf",
 		Offset: 0,
-		Count:  int64(numNeighbours),
+		Count:  num,
 	})
 
 	_, err = tx.Exec()
 
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
+	// transaction results of below command
 	belowResults, err := cmdBelow.Result()
-
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
+	// create below IPs
 	for _, result := range belowResults {
-		attr, err := c.fetchIPAttributes(result)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// prepend for correct order
-		below = append([]*ipAttributes{attr}, below...)
+		bnd := newBoundary(result.Score, "", false, false)
+		below = append(below, bnd)
 	}
+
+	// should be faster than prepending values to a slice
+	sort.Sort(byIP(below))
+
+	insideResults, err := cmdInside.Result()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	// create inside IPs
+	for _, result := range insideResults {
+		boundary := newBoundary(result.Score, "", false, false)
+		inside = append(inside, boundary)
+	}
+
+	sort.Sort(byIP(inside))
 
 	aboveResults, err := cmdAbove.Result()
-
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
+	// create above IPs
 	for _, result := range aboveResults {
-		attr, err := c.fetchIPAttributes(result)
+		bnd := newBoundary(result.Score, "", false, false)
+		above = append(above, bnd)
+	}
+
+	sort.Sort(byIP(above))
+
+	// at this point above, inside and below each contain not yet fully filled boundaries
+	// they are still missing their reason, lower and upper bound information
+
+	tx = c.rdb.TxPipeline()
+
+	belowAttrCmds := make([]*redis.SliceCmd, 0, len(below))
+	for _, bnd := range below {
+		belowAttrCmds = append(belowAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+	}
+
+	insideAttrCmds := make([]*redis.SliceCmd, 0, len(inside))
+	for _, bnd := range inside {
+		insideAttrCmds = append(insideAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+	}
+
+	aboveAttrCmds := make([]*redis.SliceCmd, 0, len(above))
+	for _, bnd := range above {
+		aboveAttrCmds = append(aboveAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+	}
+
+	_, err = tx.Exec()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+	}
+
+	for idx, cmd := range belowAttrCmds {
+		result, err := cmd.Result()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 		}
 
-		above = append(above, attr)
-	}
-
-	return
-}
-
-// fetchIpAttributes gets the remaining IP related attributes that belong to the IP range boundary
-// that is encoded in the redis.Z.Score attribute
-func (c *Client) fetchIPAttributes(result redis.Z) (*ipAttributes, error) {
-
-	switch result.Score {
-	case math.Inf(-1):
-		return globalLowerBoundary, nil
-	case math.Inf(1):
-		return globalUpperBoundary, nil
-	}
-
-	id := ""
-	var resultIP net.IP
-	var err error
-
-	switch t := result.Member.(type) {
-	case string:
-		id = t
-		resultIP, err = float64ToIP(result.Score)
-		if err != nil {
-			return nil, err
-		}
-
-	default:
-		return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
-	}
-
-	fields, err := c.rdb.HMGet(id, "low", "high", "reason").Result()
-
-	if err != nil || len(fields) == 0 {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	low := false
-	switch t := fields[0].(type) {
-	case string:
-		low = t != "0"
-	case bool:
-		low = t
-	case int:
-		low = t != 0
-	case nil:
-		low = false
-	default:
-		return nil, fmt.Errorf("%w : 'low' type unknown : %T", ErrNoResult, t)
-	}
-
-	high := false
-	switch t := fields[1].(type) {
-	case string:
-		high = t != "0"
-	case bool:
-		high = t
-	case int:
-		high = t != 0
-	case nil:
-		high = false
-	default:
-		return nil, fmt.Errorf("%w : 'high' type unknown : %T", ErrNoResult, t)
-	}
-
-	reason := ""
-	switch t := fields[2].(type) {
-	case string:
-		reason = t
-	default:
-		return nil, fmt.Errorf("%w : 'reason' type unknown : %T", ErrNoResult, t)
-	}
-
-	return &ipAttributes{
-		ID:         id,
-		IP:         resultIP,
-		Reason:     reason,
-		LowerBound: low,
-		UpperBound: high,
-	}, nil
-}
-
-// fetch a list of ipAttributes passed as result parameters
-func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*ipAttributes, error) {
-
-	attributes := make([]*ipAttributes, 0, len(results))
-
-	for _, result := range results {
-		switch result.Score {
-		case math.Inf(-1):
-			attributes = append(attributes, globalLowerBoundary)
-			continue
-		case math.Inf(1):
-			attributes = append(attributes, globalUpperBoundary)
-			continue
-		}
-
-		id := ""
-		var resultIP net.IP
-		var err error
-
-		switch t := result.Member.(type) {
-		case string:
-			id = t
-			resultIP, err = float64ToIP(result.Score)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
-		}
-
-		fields, err := c.rdb.HMGet(id, "low", "high", "reason").Result()
-
-		if err != nil || len(fields) == 0 {
-			return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		if len(result) != 3 {
+			err = fmt.Errorf("expected 3 result attributes, got %d", len(result))
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 		}
 
 		low := false
-		switch t := fields[0].(type) {
+		switch t := result[0].(type) {
 		case string:
-			low = t != "0"
-		case bool:
-			low = t
-		case int:
-			low = t != 0
+			low = t == "1"
 		case nil:
 			low = false
 		default:
-			return nil, fmt.Errorf("%w : 'low' type unknown : %T", ErrNoResult, t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, fmt.Errorf("unexpected type: %T", t))
 		}
 
 		high := false
-		switch t := fields[1].(type) {
+		switch t := result[1].(type) {
 		case string:
-			high = t != "0"
-		case bool:
-			high = t
-		case int:
-			high = t != 0
+			high = t == "1"
 		case nil:
 			high = false
 		default:
-			return nil, fmt.Errorf("%w : 'high' type unknown : %T", ErrNoResult, t)
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 		}
 
 		reason := ""
-		switch t := fields[2].(type) {
+		switch t := result[2].(type) {
 		case string:
 			reason = t
 		default:
-			return nil, fmt.Errorf("%w : 'reason' type unknown : %T", ErrNoResult, t)
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 		}
 
-		attributes = append(attributes, &ipAttributes{
-			ID:         id,
-			IP:         resultIP,
-			Reason:     reason,
-			LowerBound: low,
-			UpperBound: high,
-		})
+		below[idx].LowerBound = low
+		below[idx].UpperBound = high
+		below[idx].Reason = reason
 	}
 
-	return attributes, nil
+	for idx, cmd := range insideAttrCmds {
+		result, err := cmd.Result()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		if len(result) != 3 {
+			err = fmt.Errorf("expected 3 result attributes, got %d", len(result))
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		low := false
+		switch t := result[0].(type) {
+		case string:
+			low = t == "1"
+		case nil:
+			low = false
+		default:
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, fmt.Errorf("unexpected type: %T", t))
+		}
+
+		high := false
+		switch t := result[1].(type) {
+		case string:
+			high = t == "1"
+		case nil:
+			high = false
+		default:
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		reason := ""
+		switch t := result[2].(type) {
+		case string:
+			reason = t
+		default:
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		inside[idx].LowerBound = low
+		inside[idx].UpperBound = high
+		inside[idx].Reason = reason
+	}
+
+	for idx, cmd := range aboveAttrCmds {
+		result, err := cmd.Result()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		if len(result) != 3 {
+			err = fmt.Errorf("expected 3 result attributes, got %d", len(result))
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		low := false
+		switch t := result[0].(type) {
+		case string:
+			low = t == "1"
+		case nil:
+			low = false
+		default:
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		high := false
+		switch t := result[1].(type) {
+		case string:
+			high = t == "1"
+		case nil:
+			high = false
+		default:
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		reason := ""
+		switch t := result[2].(type) {
+		case string:
+			reason = t
+		default:
+			err = fmt.Errorf("unexpected type: %T", t)
+			return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
+		}
+
+		above[idx].LowerBound = low
+		above[idx].UpperBound = high
+		above[idx].Reason = reason
+	}
+
+	return below, inside, above, nil
 }
 
-func (c *Client) fetchBoundaries(ips ...net.IP) ([]*ipAttributes, error) {
-	intIPs := make([]int64, len(ips))
-	for idx, ip := range ips {
-
-		aIP, err := ipToInt64(ip)
-		if err != nil {
-			return nil, err
-		}
-
-		intIPs[idx] = aIP
-	}
-
-	tx := c.rdb.Pipeline()
-
-	cmds := make([]*redis.StringSliceCmd, 0, len(ips))
-
-	for _, intIP := range intIPs {
-		cmd := tx.ZRangeByScore(IPRangesKey, redis.ZRangeBy{
-			Min: strconv.FormatInt(intIP, 10),
-			Max: strconv.FormatInt(intIP, 10),
-		})
-
-		cmds = append(cmds, cmd)
-	}
-
-	_, err := tx.Exec()
-	if err != nil {
-		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-	}
-
-	result := make([]*ipAttributes, 0, len(ips))
-
-	for idx, cmd := range cmds {
-		boundaries, err := cmd.Result()
-		if err != nil {
-			return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-		}
-
-		if len(boundaries) == 0 {
-			result = append(result, nil)
-		} else {
-			id := boundaries[0]
-
-			attr, err := c.rdb.HMGet(id, "reason", "low", "high").Result()
-			if err != nil {
-				return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
-			}
-			if len(attr) < 3 {
-				result = append(result, nil)
-				continue
-			}
-
-			reason := ""
-
-			if t, ok := attr[0].(string); ok {
-				reason = t
-			}
-
-			low := false
-			switch t := attr[1].(type) {
-			case string:
-				low = t != "0"
-			case bool:
-				low = t
-			}
-
-			high := false
-			switch t := attr[2].(type) {
-			case string:
-				high = t != "0"
-			case bool:
-				high = t
-			}
-
-			if !low && low == high {
-				result = append(result, nil)
-				continue
-			}
-
-			resultAttr := &ipAttributes{
-				ID:         id,
-				IP:         ips[idx],
-				Reason:     reason,
-				LowerBound: low,
-				UpperBound: high,
-			}
-			result = append(result, resultAttr)
-		}
-	}
-
-	return result, nil
-}
-
-func (c *Client) removeIDs(ids ...string) error {
-	tx := c.rdb.TxPipeline()
-
-	// remove from sorted set
-	tx.ZRem(IPRangesKey, ids)
-
-	// remove attribute object
-	tx.Del(ids...)
-
-	_, err := tx.Exec()
+// Insert inserts a new IP range or IP into the database with an associated reason string
+func (c *Client) Insert(ipRange, reason string) error {
+	low, high, err := parseRange(ipRange, reason)
 	if err != nil {
 		return err
 	}
-	return nil
-}
 
-// removes dubplicates that are next to each other.
-func idsOf(attributes []*ipAttributes) []string {
-	ids := make([]string, 0, len(attributes))
+	tx := c.rdb.TxPipeline()
 
-	for idx, attr := range attributes {
-		// attributes are sorted
-		if idx > 0 && len(attr.ID) > 0 && attr.ID == attributes[idx-1].ID {
-			// skip continuous dubplicates
-			continue
-		}
-		if attr.ID != "" {
-			ids = append(ids, attr.ID)
+	belowN, inside, aboveN, err := c.vicinity(low, high, 1)
+	if err != nil {
+		return err
+	}
+
+	if len(belowN) < 1 || len(aboveN) < 1 {
+		panic(ErrDatabaseInconsistent)
+	}
+
+	// remove inside
+	for _, bnd := range inside {
+		bnd.Remove(tx)
+	}
+
+	belowNearest := belowN[0]
+	aboveNearest := aboveN[0]
+
+	belowCut := low.Below()
+	belowCut.SetUpperBound()
+	belowCut.Reason = belowNearest.Reason
+
+	aboveCut := high.Above()
+	aboveCut.SetLowerBound()
+	aboveCut.Reason = aboveNearest.Reason
+
+	if belowNearest.IsLowerBound() {
+		// need to cut below
+		if !belowNearest.EqualIP(belowCut) {
+			// can cut below
+			belowCut.Insert(tx)
+		} else {
+			// cannot cut below
+			belowNearest.SetDoubleBound()
+			belowNearest.Insert(tx)
 		}
 	}
-	return ids
-}
 
-// removes dubplicates that are next to each other.
-func ipsOf(attributes []*ipAttributes) []net.IP {
-	ids := make([]net.IP, 0, len(attributes))
-
-	for idx, attr := range attributes {
-		// attributes are sorted
-		if idx > 0 && len(attr.ID) > 0 && attr.EqualIP(attributes[idx-1]) {
-			// skip continuous duplicates
-			continue
-		}
-
-		if attr.IP != nil {
-			ids = append(ids, attr.IP)
-		}
-
+	if low.EqualIP(high) {
+		doubleBoundary := low
+		doubleBoundary.SetDoubleBound()
+		doubleBoundary.Insert(tx)
+	} else {
+		low.Insert(tx)
+		high.Insert(tx)
 	}
-	return ids
+
+	if aboveNearest.IsUpperBound() {
+		// need to cut above
+		if !aboveNearest.EqualIP(aboveCut) {
+			// can cut above
+			aboveCut.Insert(tx)
+		} else {
+			// cannot cut above
+			aboveNearest.SetDoubleBound()
+			aboveNearest.Insert(tx)
+		}
+	}
+
+	_, err = tx.Exec()
+	return err
 }
 
-// Find returns a non empty reason and nil for an error if the given IP is
-// found within any previously inserted IP range.
-// An error is returned if the request fails and thus should be treated as false.
-func (c *Client) Find(ip string) (string, error) {
-	reqIP, _, err := boundaries(ip)
+// Remove removes an IP range from the database.
+func (c *Client) Remove(ipRange string) error {
+	low, high, err := parseRange(ipRange, "")
 
+	if err != nil {
+		return err
+	}
+
+	tx := c.rdb.TxPipeline()
+
+	below, inside, above, err := c.vicinity(low, high, 1)
+	if err != nil {
+		return err
+	}
+
+	for _, bnd := range inside {
+		bnd.Remove(tx)
+	}
+
+	belowNearest := below[0]
+	aboveNearest := above[0]
+
+	belowCut := low.Below()
+	belowCut.SetUpperBound()
+	belowCut.Reason = belowNearest.Reason
+
+	aboveCut := high.Above()
+	aboveCut.SetUpperBound()
+	aboveCut.Reason = aboveNearest.Reason
+
+	if belowNearest.IsLowerBound() {
+		// need to cut below
+		if !belowNearest.EqualIP(belowCut) {
+			// can cut
+			belowCut.Insert(tx)
+		} else {
+			// cannot cut
+			belowNearest.SetDoubleBound()
+			belowNearest.Insert(tx)
+		}
+	}
+
+	if aboveNearest.IsUpperBound() {
+		// need to cut above
+		if !aboveNearest.EqualIP(aboveCut) {
+			// can cut above
+			aboveCut.Insert(tx)
+		} else {
+			// cannot cut above
+			aboveNearest.SetDoubleBound()
+			aboveNearest.Insert(tx)
+
+		}
+	}
+
+	_, err = tx.Exec()
+	return err
+}
+
+// Find searches for the requested IP in the database. If the IP is found within any previously inserted range,
+// the associated reason is returned. If it is not found, an error is returned instead.
+func (c *Client) Find(ip string) (reason string, err error) {
+	ipaddr, err := netaddr.NewIPAddress(ip, 4)
+	if err != nil {
+		return "", err
+	}
+	bnd := newBoundary(ipaddr.IP(), reason, true, true)
+
+	below, inside, above, err := c.vicinity(bnd, bnd, 1)
 	if err != nil {
 		return "", err
 	}
 
-	intIP, _ := ipToInt64(reqIP)
-
-	belowN, aboveN, err := c.neighboursInt(intIP, 1)
-	if err != nil {
-		return "", err
+	if len(inside) == 1 {
+		found := inside[0]
+		return found.Reason, nil
 	}
 
-	// this is enforced by the idempotent database initialization.
-	below, above := belowN[0], aboveN[0]
+	belowNearest := below[0]
+	aboveNearest := above[0]
 
-	if below.Equal(above) && below.IP.Equal(reqIP) {
-		return below.Reason, nil
+	if belowNearest.IsLowerBound() && aboveNearest.IsUpperBound() {
+		if belowNearest.EqualReason(aboveNearest) {
+			return belowNearest.Reason, nil
+		}
+		panic("reasons inconsistent")
 	}
 
-	inRange := below.LowerBound && !below.UpperBound && !above.LowerBound && above.UpperBound
+	return "", ErrIPNotFound
+}
 
-	if inRange && below.Reason != above.Reason {
-		panic(fmt.Errorf(" '%s'.Reason != '%s'.Reason : '%s' != '%s'", below.ID, above.ID, below.Reason, above.Reason))
+func parseRange(r, reason string) (low, high boundary, err error) {
+	ip, err := netaddr.NewIPAddress(r, 4)
+	if err == nil {
+		r := newBoundary(ip.IP(), reason, true, true)
+		return r, r, nil
 	}
+	// parsing as IP failed
 
-	if !inRange {
-		return "", ErrIPNotFound
+	net, err := netaddr.NewIPNetwork(r)
+	if err == nil {
+		low = newBoundary(net.First().IP(), reason, true, false)
+		high = newBoundary(net.Last().IP(), reason, false, true)
+		return low, high, nil
 	}
+	// parsing as cidr failed x.x.x.x/24
 
-	if below.Reason == DeleteReason {
-		return "", ErrNoResult
+	var dummy boundary
+	if matches := customIPRangeRegex.FindStringSubmatch(r); len(matches) == 3 {
+		lowerBound := matches[1]
+		upperBound := matches[2]
+
+		lowIP, err := netaddr.NewIPAddress(lowerBound)
+		if err != nil {
+			return dummy, dummy, fmt.Errorf("%w : %v", ErrInvalidRange, err)
+		}
+		highIP, err := netaddr.NewIPAddress(upperBound)
+		if err != nil {
+			return dummy, dummy, fmt.Errorf("%w : %v", ErrInvalidRange, err)
+		}
+
+		if lowIP.Compare(highIP) > 0 {
+			return dummy, dummy, ErrInvalidRange
+		}
+
+		low = newBoundary(lowIP.IP(), reason, true, false)
+		high = newBoundary(highIP.IP(), reason, false, true)
+		return low, high, nil
 	}
-
-	return below.Reason, nil
+	return dummy, dummy, ErrInvalidRange
 }
