@@ -68,9 +68,3 @@ func (ia *ipAttributes) String() string {
 	}
 	return string(b)
 }
-
-// IPRangeAttributes maps an IP range to the Reason string
-type IPRangeAttributes struct {
-	Range  string
-	Reason string // Ban reason
-}
