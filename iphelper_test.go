@@ -33,7 +33,7 @@ func TestBoundaries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotLow, gotHigh, err := Boundaries(tt.args.ipRange)
+			gotLow, gotHigh, err := boundaries(tt.args.ipRange)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Boundaries() error = %v, wantErr %v", err, tt.wantErr)
 				return

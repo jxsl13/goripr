@@ -227,7 +227,7 @@ func (c *Client) insertBoundaries(boundaries []*IPAttributes) error {
 // Bigger ranges are sliced into smaller ranges if the Reason strings differ.
 // If the reason strings are equal, ranges are expanded as expected.
 func (c *Client) Insert(ipRange, reason string) error {
-	low, high, err := Boundaries(ipRange)
+	low, high, err := boundaries(ipRange)
 
 	if err != nil {
 		return err
@@ -1000,7 +1000,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 
 // Remove removes a range from the set
 func (c *Client) Remove(ipRange string) error {
-	low, high, err := Boundaries(ipRange)
+	low, high, err := boundaries(ipRange)
 
 	if err != nil {
 		return err
@@ -1570,7 +1570,7 @@ func ipsOf(attributes []*IPAttributes) []net.IP {
 // found within any previously inserted IP range.
 // An error is returned if the request fails and thus should be treated as false.
 func (c *Client) Find(ip string) (string, error) {
-	reqIP, _, err := Boundaries(ip)
+	reqIP, _, err := boundaries(ip)
 
 	if err != nil {
 		return "", err

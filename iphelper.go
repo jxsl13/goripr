@@ -21,8 +21,8 @@ const (
 	IPv6Bits = 128
 )
 
-// Boundaries returns the lower and upper bound of a given range string
-func Boundaries(ipRange string) (low, high net.IP, err error) {
+// boundaries returns the lower and upper bound of a given range string
+func boundaries(ipRange string) (low, high net.IP, err error) {
 
 	if matches := ipCidrRegex.FindStringSubmatch(ipRange); len(matches) == 2 {
 

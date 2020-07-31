@@ -108,7 +108,7 @@ func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 	}
 
 	if ipRange != "" {
-		low, high, err := Boundaries(ipRange)
+		low, high, err := boundaries(ipRange)
 		if err != nil {
 			panic(err)
 		}
