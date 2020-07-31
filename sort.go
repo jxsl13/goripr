@@ -1,14 +1,10 @@
 package goripr
 
-import (
-	"github.com/go-redis/redis"
-)
+type byIP []boundary
 
-type byAttributeIP []*ipAttributes
-
-func (a byAttributeIP) Len() int      { return len(a) }
-func (a byAttributeIP) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a byAttributeIP) Less(i, j int) bool {
+func (a byIP) Len() int      { return len(a) }
+func (a byIP) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a byIP) Less(i, j int) bool {
 	aID := a[i].ID
 	bID := a[j].ID
 
@@ -18,16 +14,8 @@ func (a byAttributeIP) Less(i, j int) bool {
 		return false
 	}
 
-	aInt, _ := ipToInt64(a[i].IP)
-	bInt, _ := ipToInt64(a[j].IP)
+	aInt := a[i].Int64
+	bInt := a[j].Int64
 
 	return aInt < bInt
-}
-
-type byScore []redis.Z
-
-func (a byScore) Len() int      { return len(a) }
-func (a byScore) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a byScore) Less(i, j int) bool {
-	return a[i].Score < a[j].Score
 }

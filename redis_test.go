@@ -139,7 +139,7 @@ func TestClient_Insert(t *testing.T) {
 
 func TestClient_Find(t *testing.T) {
 
-	tests := initTestCasesFind(10)
+	tests := initTestCasesFind(100)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -183,7 +183,7 @@ func TestClient_Remove(t *testing.T) {
 
 	tests := []testCaseFind{}
 
-	tests = append(tests, initTestCasesFind(10)...)
+	tests = append(tests, initTestCasesFind(100)...)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,7 +254,7 @@ type testCase struct {
 // Tests whether the database is in a cosistent state.
 func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 
-	attributes, err := rdb.insideInfRange()
+	attributes, err := rdb.All()
 	if err != nil {
 		panic(err)
 	}
@@ -268,22 +268,22 @@ func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 
 	t.Logf("%d attributes fetched from database.", len(attributes))
 	for idx, attr := range attributes {
-		t.Logf("\tuuid=%s idx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", attr.ID, idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
+		t.Logf("\tid=%16s idx=%4d\t%16s\tlower: %5t\tupper: %5t\t%20s", attr.ID, idx, attr.IP.String(), attr.LowerBound, attr.UpperBound, attr.Reason)
 	}
 
 	if ipRange != "" {
-		low, high, err := boundaries(ipRange)
+		low, high, err := parseRange(ipRange, "")
 		if err != nil {
 			panic(err)
 		}
 
 		foundLow, foundHigh := false, false
 		for _, attr := range attributes {
-			if attr.IP.Equal(low) && attr.LowerBound {
+			if attr.EqualIP(low) && attr.LowerBound {
 				foundLow = true
 			}
 
-			if attr.IP.Equal(high) && attr.UpperBound {
+			if attr.EqualIP(high) && attr.UpperBound {
 				foundHigh = true
 			}
 		}
@@ -405,11 +405,8 @@ func generateRange() (ipRange string, insideIP string) {
 
 	net := netaddr.MustNewIPNetwork(cidrRange)
 
-	lower := net.First()
-	higher := net.Last()
-
-	lowerInt, _ := ipToInt64(lower.IP())
-	higherInt, _ := ipToInt64(higher.IP())
+	lowerInt := net.First().BigInt().Int64()
+	higherInt := net.Last().BigInt().Int64()
 
 	between = generateBetween(lowerInt, higherInt)
 
@@ -417,10 +414,7 @@ func generateRange() (ipRange string, insideIP string) {
 		panic("invalid ip generated")
 	}
 
-	betweenIP, err := int64ToIP(between)
-	if err != nil {
-		panic(err)
-	}
+	betweenIP := netaddr.MustNewIPAddress(between)
 
 	return cidrRange, betweenIP.String()
 }
