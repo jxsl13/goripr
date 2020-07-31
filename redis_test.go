@@ -265,7 +265,9 @@ func initRDB(db int) *Client {
 	if db > 15 {
 		panic("redis only supports database indices from 0 through 15.")
 	}
-	rdb, err := NewClient(Options{
+
+	// new default client
+	c, err := NewClient(Options{
 		Addr:     "localhost:6379",
 		Password: "",
 		DB:       db,
@@ -274,22 +276,11 @@ func initRDB(db int) *Client {
 		panic(err)
 	}
 
-	_, err = rdb.FlushDB().Result()
-	if err != nil {
+	// reset database
+	if err := c.Reset(); err != nil {
 		panic(err)
 	}
-
-	rdb.Close()
-
-	rdb, err = NewClient(Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       db,
-	})
-	if err != nil {
-		panic(err)
-	}
-	return rdb
+	return c
 }
 
 func shuffle(seed int64, a []rangeReason) []rangeReason {
@@ -362,9 +353,9 @@ func TestClient_Insert(t *testing.T) {
 				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", ipRange.Range)
 
 			}
-			_, err := rdb.FlushDB().Result()
-			if err != nil {
-				panic("failed to flush db")
+
+			if err := rdb.Flush(); err != nil {
+				panic(err)
 			}
 		})
 	}
@@ -435,7 +426,7 @@ func initTestCasesFind(num int) (testCases []testCaseFind) {
 
 func TestClient_Find(t *testing.T) {
 
-	tests := initTestCasesFind(10)
+	tests := initTestCasesFind(100)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -471,8 +462,6 @@ func TestClient_Find(t *testing.T) {
 				}
 			}
 
-			rdb.FlushDB().Result()
-
 		})
 	}
 }
@@ -481,15 +470,12 @@ func TestClient_Remove(t *testing.T) {
 
 	tests := []testCaseFind{}
 
-	tests = append(tests, initTestCasesFind(10)...)
+	tests = append(tests, initTestCasesFind(100)...)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
 			rdb := initRDB(0)
-			defer func() {
-				rdb.FlushDB().Result()
-			}()
 			defer rdb.Close()
 
 			for idx, rir := range tt.ipRanges {

@@ -13,11 +13,6 @@ import (
 	"github.com/go-redis/redis"
 )
 
-// Client is an extended version of the redis.Client
-type Client struct {
-	*redis.Client
-}
-
 // Options configures the redis database connection
 type Options struct {
 	// The network type, either tcp or unix.
@@ -88,6 +83,11 @@ type Options struct {
 	TLSConfig *tls.Config
 }
 
+// Client is an extended version of the redis.Client
+type Client struct {
+	rdb *redis.Client
+}
+
 // NewClient creates a new redi client connection
 func NewClient(options Options) (*Client, error) {
 	rdb := redis.NewClient(&redis.Options{
@@ -125,10 +125,25 @@ func NewClient(options Options) (*Client, error) {
 		return nil, ErrConnectionFailed
 	}
 
+	client := &Client{
+		rdb,
+	}
+
+	err = client.init()
+	if err != nil {
+		client.Close()
+		return nil, fmt.Errorf("%w : %v", ErrDatabaseInit, err)
+	}
+
+	return client, nil
+}
+
+// init the GlobalBoundaries
+func (c *Client) init() error {
 	// idempotent and important to mark these boundaries
 	// we always want to have the infinite boundaries available in order to tell,
 	// that there are no more elements below or above some other element.
-	_, err = rdb.ZAdd(IPRangesKey,
+	_, err := c.rdb.ZAdd(IPRangesKey,
 		redis.Z{
 			Score:  math.Inf(-1),
 			Member: "-inf",
@@ -139,21 +154,34 @@ func NewClient(options Options) (*Client, error) {
 		},
 	).Result()
 
-	if err != nil {
-		rdb.Close()
-		return nil, fmt.Errorf("%w : %v", ErrDatabaseInit, err)
+	return err
+}
+
+// Close the redis database connection
+func (c *Client) Close() error {
+	return c.rdb.Close()
+}
+
+// Flush removes all of the database content including the global bounadaries.
+func (c *Client) Flush() error {
+	_, err := c.rdb.FlushDB().Result()
+	return err
+}
+
+// Reset the database except for its global boundaries
+func (c *Client) Reset() error {
+
+	if err := c.Flush(); err != nil {
+		return err
 	}
-
-	// type cast
-	return &Client{rdb}, nil
-
+	return c.init()
 }
 
 // insertBoundaries does not do any range checks, allowing for a little bit more performance
 // Side effect: if boundary.ID == "" -> it gets a new UUID
-func (rdb *Client) insertBoundaries(boundaries []*IPAttributes) error {
+func (c *Client) insertBoundaries(boundaries []*IPAttributes) error {
 
-	tx := rdb.TxPipeline()
+	tx := c.rdb.TxPipeline()
 	// fill transaction
 	for _, boundary := range boundaries {
 		id := ""
@@ -198,7 +226,7 @@ func (rdb *Client) insertBoundaries(boundaries []*IPAttributes) error {
 // Insert safely inserts a new range into the database.
 // Bigger ranges are sliced into smaller ranges if the Reason strings differ.
 // If the reason strings are equal, ranges are expanded as expected.
-func (rdb *Client) Insert(ipRange, reason string) error {
+func (c *Client) Insert(ipRange, reason string) error {
 	low, high, err := Boundaries(ipRange)
 
 	if err != nil {
@@ -210,15 +238,15 @@ func (rdb *Client) Insert(ipRange, reason string) error {
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
-		return rdb.insertSingleInt(lowInt64, reason)
+		return c.insertSingleInt(lowInt64, reason)
 	}
 
-	return rdb.insertRangeInt(lowInt64, highInt64, reason)
+	return c.insertRangeInt(lowInt64, highInt64, reason)
 }
 
-func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
+func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 
-	below, above, err := rdb.neighboursInt(singleInt, 1)
+	below, above, err := c.neighboursInt(singleInt, 1)
 	if err != nil {
 		return err
 	}
@@ -244,7 +272,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 		hitBoundary := closestBelow
 
 		// remove the hit boundary
-		err := rdb.removeIDs(hitBoundary.ID)
+		err := c.removeIDs(hitBoundary.ID)
 		if err != nil {
 			return err
 		}
@@ -257,7 +285,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				singleBoundary,
 			}
 
-			return rdb.insertBoundaries(newRange)
+			return c.insertBoundaries(newRange)
 
 		} else if hitBoundary.LowerBound {
 			// must be single boundary, meaning a range with at least two members
@@ -279,7 +307,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				cutAbove,
 			}
 
-			boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+			boundaries, err := c.fetchBoundaries(cutAbove.IP)
 			if err != nil {
 				return err
 			}
@@ -298,7 +326,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				// must be an upper boundary
 
 				// shrink range above to single value range
-				_, err := rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				_, err := c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 				if err != nil {
 					return err
 				}
@@ -310,7 +338,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				}
 			}
 
-			return rdb.insertBoundaries(newRange)
+			return c.insertBoundaries(newRange)
 
 		} else {
 			// hitBoundary.UpperBound
@@ -324,7 +352,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				UpperBound: true,
 			}
 
-			boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+			boundaries, err := c.fetchBoundaries(cutBelow.IP)
 			if err != nil {
 				return err
 			}
@@ -350,7 +378,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				// must be an lower boundary
 
 				// shrink range above to single value range
-				_, err := rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				_, err := c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 				if err != nil {
 					return err
 				}
@@ -362,7 +390,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 				}
 			}
 
-			return rdb.insertBoundaries(newRange)
+			return c.insertBoundaries(newRange)
 		}
 
 	} else if closestBelow.LowerBound && closestAbove.UpperBound &&
@@ -397,7 +425,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 			cutAbove,
 		}
 
-		boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+		boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
 		if err != nil {
 			return err
 		}
@@ -408,15 +436,15 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 		}
 
 		if hitCutBelow != nil && hitCutAbove != nil {
-			tx := rdb.TxPipeline()
+			tx := c.rdb.TxPipeline()
 
 			// cutting above single value range
 			// lower bound gets high attribute
-			rdb.HSet(hitCutBelow.ID, "high", true)
+			c.rdb.HSet(hitCutBelow.ID, "high", true)
 
 			// cutting below single value range
 			// upper bound gets low attribute
-			rdb.HSet(hitCutAbove.ID, "low", true)
+			c.rdb.HSet(hitCutAbove.ID, "low", true)
 
 			_, err = tx.Exec()
 			if err != nil {
@@ -432,7 +460,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 			// only hitCutBelow
 
 			// boundary below becomes a single value range
-			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 			if err != nil {
 				return err
 			}
@@ -447,7 +475,7 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 			// only hitCutAbove
 
 			// boundary above becomes a single value range
-			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 			if err != nil {
 				return err
 			}
@@ -459,24 +487,24 @@ func (rdb *Client) insertSingleInt(singleInt int64, reason string) error {
 			}
 		}
 
-		return rdb.insertBoundaries(newRange)
+		return c.insertBoundaries(newRange)
 	}
 
 	// not on boundary or inside a range
 	newRange := []*IPAttributes{singleBoundary}
 
-	return rdb.insertBoundaries(newRange)
+	return c.insertBoundaries(newRange)
 }
 
 // insertRangeInt properly inserts new ranges into the database, removing other ranges, cutting them, shrinking them, etc.
-func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error {
+func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error {
 
-	inside, err := rdb.insideIntRange(lowInt64, highInt64)
+	inside, err := c.insideIntRange(lowInt64, highInt64)
 	if err != nil {
 		return err
 	}
 
-	belowLowerBound, aboveUpperBound, err := rdb.belowLowerAboveUpper(lowInt64, highInt64, 2)
+	belowLowerBound, aboveUpperBound, err := c.belowLowerAboveUpper(lowInt64, highInt64, 2)
 	if err != nil {
 		return err
 	}
@@ -553,7 +581,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				cutAbove,
 			}
 
-			boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+			boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
 			if err != nil {
 				return err
 			}
@@ -566,7 +594,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 			if hitCutBelow != nil && hitCutAbove != nil {
 				// hit lower & upper boundary
-				tx := rdb.TxPipeline()
+				tx := c.rdb.TxPipeline()
 				tx.HSet(hitCutBelow.ID, "high", true)
 				tx.HSet(hitCutAbove.ID, "low", true)
 
@@ -583,7 +611,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 			} else if hitCutBelow != nil {
 				// only hit lower boundary
-				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 				if err != nil {
 					return err
 				}
@@ -596,7 +624,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				}
 			} else if hitCutAbove != nil {
 				// only hit upper boundary
-				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 				if err != nil {
 					return err
 				}
@@ -624,7 +652,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		}
 
 		// sets boundaries below and above out to be inserted range
-		return rdb.insertBoundaries(newRangeBoundaries)
+		return c.insertBoundaries(newRangeBoundaries)
 	}
 
 	// lenInside > 0
@@ -656,7 +684,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
 			insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
 
-			boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+			boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
 			if err != nil {
 				return err
 			}
@@ -668,15 +696,15 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			}
 
 			if hitCutBelow != nil && hitCutAbove != nil {
-				tx := rdb.TxPipeline()
+				tx := c.rdb.TxPipeline()
 
 				// cutting above single value range
 				// lower bound gets high attribute
-				rdb.HSet(hitCutBelow.ID, "high", true)
+				c.rdb.HSet(hitCutBelow.ID, "high", true)
 
 				// cutting below single value range
 				// upper bound gets low attribute
-				rdb.HSet(hitCutAbove.ID, "low", true)
+				c.rdb.HSet(hitCutAbove.ID, "low", true)
 
 				_, err = tx.Exec()
 				if err != nil {
@@ -693,7 +721,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				// only hitCutBelow
 
 				// boundary below becomes a single value range
-				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 				if err != nil {
 					return err
 				}
@@ -709,7 +737,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				// only hitCutAbove
 
 				// boundary above becomes a single value range
-				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 				if err != nil {
 					return err
 				}
@@ -733,7 +761,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				upperBound,
 			}
 
-			boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+			boundaries, err := c.fetchBoundaries(cutBelow.IP)
 			if err != nil {
 				return err
 			}
@@ -748,7 +776,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				// only hitCutBelow
 
 				// boundary below becomes a single value range
-				_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+				_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 				if err != nil {
 					return err
 				}
@@ -769,7 +797,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				cutAbove,
 			}
 
-			boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+			boundaries, err := c.fetchBoundaries(cutAbove.IP)
 			if err != nil {
 				return err
 			}
@@ -784,7 +812,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 				// only hitCutAbove
 
 				// boundary below becomes a single value range
-				_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+				_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 				if err != nil {
 					return err
 				}
@@ -798,14 +826,14 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		}
 
 		// delete all inside boundaries
-		err = rdb.removeIDs(idsOf(inside)...)
+		err = c.removeIDs(idsOf(inside)...)
 		if err != nil {
 			return err
 		}
 
 		// insert lower cut, new range, upper cut boundary
 		// depending on what is actually in the newRange
-		return rdb.insertBoundaries(newRange)
+		return c.insertBoundaries(newRange)
 	}
 
 	// lenInside % 2 == 1
@@ -813,7 +841,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 	// delete all boundaries inside
 	// of the new to be inserted range
-	err = rdb.removeIDs(idsOf(inside)...)
+	err = c.removeIDs(idsOf(inside)...)
 	if err != nil {
 		return err
 	}
@@ -836,7 +864,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			cutAbove,
 		}
 
-		boundaries, err := rdb.fetchBoundaries(cutBelow.IP, cutAbove.IP)
+		boundaries, err := c.fetchBoundaries(cutBelow.IP, cutAbove.IP)
 		if err != nil {
 			return err
 		}
@@ -849,7 +877,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 		if hitCutBelow != nil && hitCutAbove != nil {
 			// hit lower & upper boundary
-			tx := rdb.TxPipeline()
+			tx := c.rdb.TxPipeline()
 			tx.HSet(hitCutBelow.ID, "high", true)
 			tx.HSet(hitCutAbove.ID, "low", true)
 
@@ -866,7 +894,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 		} else if hitCutBelow != nil {
 			// only hit lower boundary
-			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 			if err != nil {
 				return err
 			}
@@ -879,7 +907,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			}
 		} else if hitCutAbove != nil {
 			// only hit upper boundary
-			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 			if err != nil {
 				return err
 			}
@@ -903,7 +931,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			upperBound,
 		}
 
-		boundaries, err := rdb.fetchBoundaries(cutBelow.IP)
+		boundaries, err := c.fetchBoundaries(cutBelow.IP)
 		if err != nil {
 			return err
 		}
@@ -916,7 +944,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 		if hitCutBelow != nil {
 			// only hit lower boundary
-			_, err = rdb.HSet(hitCutBelow.ID, "high", true).Result()
+			_, err = c.rdb.HSet(hitCutBelow.ID, "high", true).Result()
 			if err != nil {
 				return err
 			}
@@ -941,7 +969,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 			cutAbove,
 		}
 
-		boundaries, err := rdb.fetchBoundaries(cutAbove.IP)
+		boundaries, err := c.fetchBoundaries(cutAbove.IP)
 		if err != nil {
 			return err
 		}
@@ -954,7 +982,7 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 
 		if hitCutAbove != nil {
 			// only hit boundary above upper boundary
-			_, err = rdb.HSet(hitCutAbove.ID, "low", true).Result()
+			_, err = c.rdb.HSet(hitCutAbove.ID, "low", true).Result()
 			if err != nil {
 				return err
 			}
@@ -967,11 +995,11 @@ func (rdb *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) erro
 		}
 	}
 
-	return rdb.insertBoundaries(newRangeBoundaries)
+	return c.insertBoundaries(newRangeBoundaries)
 }
 
 // Remove removes a range from the set
-func (rdb *Client) Remove(ipRange string) error {
+func (c *Client) Remove(ipRange string) error {
 	low, high, err := Boundaries(ipRange)
 
 	if err != nil {
@@ -983,32 +1011,32 @@ func (rdb *Client) Remove(ipRange string) error {
 
 	if lowInt64 == highInt64 {
 		// edge case, range is single value
-		err = rdb.insertSingleInt(lowInt64, DeleteReason)
+		err = c.insertSingleInt(lowInt64, DeleteReason)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = rdb.insertRangeInt(lowInt64, highInt64, DeleteReason)
+	err = c.insertRangeInt(lowInt64, highInt64, DeleteReason)
 	if err != nil {
 		return err
 	}
 
 	// get IDs of boundaries within given range
-	boundaryIDs, err := rdb.insideIntIDs(lowInt64, highInt64)
+	boundaryIDs, err := c.insideIntIDs(lowInt64, highInt64)
 
 	if err != nil {
 		return err
 	}
 
 	// remove from sorted set and from attribute map
-	return rdb.removeIDs(boundaryIDs...)
+	return c.removeIDs(boundaryIDs...)
 }
 
 // insideIntIDs returns a list of range boundary IDs that lie within lowInt64 through highInt64.
 // including these two boundaries.
-func (rdb *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
-	tx := rdb.TxPipeline()
+func (c *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
+	tx := c.rdb.TxPipeline()
 
 	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min: strconv.FormatInt(lowInt64, 10),
@@ -1044,10 +1072,10 @@ func (rdb *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
 }
 
 // insideIntRange does not do any checks or ip conversions to be reusable
-func (rdb *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttributes, err error) {
+func (c *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttributes, err error) {
 	inside = make([]*IPAttributes, 0, 3)
 
-	tx := rdb.TxPipeline()
+	tx := c.rdb.TxPipeline()
 
 	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min: strconv.FormatInt(lowInt64, 10),
@@ -1066,7 +1094,7 @@ func (rdb *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttrib
 	}
 
 	for _, result := range insideResults {
-		attr, err := rdb.fetchIPAttributes(result)
+		attr, err := c.fetchIPAttributes(result)
 		if err != nil {
 			return nil, err
 		}
@@ -1079,10 +1107,10 @@ func (rdb *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttrib
 }
 
 // insideInfRange returns all ranges
-func (rdb *Client) insideInfRange() (inside []*IPAttributes, err error) {
+func (c *Client) insideInfRange() (inside []*IPAttributes, err error) {
 	inside = make([]*IPAttributes, 0, 3)
 
-	tx := rdb.TxPipeline()
+	tx := c.rdb.TxPipeline()
 
 	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min: "-inf",
@@ -1101,7 +1129,7 @@ func (rdb *Client) insideInfRange() (inside []*IPAttributes, err error) {
 	}
 
 	for _, result := range insideResults {
-		attr, err := rdb.fetchIPAttributes(result)
+		attr, err := c.fetchIPAttributes(result)
 		if err != nil {
 			return nil, err
 		}
@@ -1113,9 +1141,9 @@ func (rdb *Client) insideInfRange() (inside []*IPAttributes, err error) {
 	return
 }
 
-func (rdb *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
+func (c *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
 
-	tx := rdb.TxPipeline()
+	tx := c.rdb.TxPipeline()
 
 	cmdBelowLower := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min:    "-inf",
@@ -1152,12 +1180,12 @@ func (rdb *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, ab
 		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
-	belowLower, err = rdb.fetchAllIPAttributes(belowLowerResults...)
+	belowLower, err = c.fetchAllIPAttributes(belowLowerResults...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
-	aboveUpper, err = rdb.fetchAllIPAttributes(aboveUpperResults...)
+	aboveUpper, err = c.fetchAllIPAttributes(aboveUpperResults...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
@@ -1166,12 +1194,12 @@ func (rdb *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, ab
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
-func (rdb *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*IPAttributes, err error) {
+func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*IPAttributes, err error) {
 
 	below = make([]*IPAttributes, 0, numNeighbours)
 	above = make([]*IPAttributes, 0, numNeighbours)
 
-	tx := rdb.TxPipeline()
+	tx := c.rdb.TxPipeline()
 
 	cmdBelow := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
 		Min:    "-inf",
@@ -1200,7 +1228,7 @@ func (rdb *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above [
 	}
 
 	for _, result := range belowResults {
-		attr, err := rdb.fetchIPAttributes(result)
+		attr, err := c.fetchIPAttributes(result)
 		if errors.Is(err, ErrLowerBoundary) {
 			attr = GlobalLowerBoundary
 		} else if err != nil {
@@ -1218,7 +1246,7 @@ func (rdb *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above [
 	}
 
 	for _, result := range aboveResults {
-		attr, err := rdb.fetchIPAttributes(result)
+		attr, err := c.fetchIPAttributes(result)
 		if errors.Is(err, ErrUpperBoundary) {
 			attr = GlobalUpperBoundary
 		} else if err != nil {
@@ -1233,7 +1261,7 @@ func (rdb *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above [
 
 // fetchIpAttributes gets the remaining IP related attributes that belong to the IP range boundary
 // that is encoded in the redis.Z.Score attribute
-func (rdb *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
+func (c *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 
 	switch result.Score {
 	case math.Inf(-1):
@@ -1258,7 +1286,7 @@ func (rdb *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 		return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
 	}
 
-	fields, err := rdb.HMGet(id, "low", "high", "reason").Result()
+	fields, err := c.rdb.HMGet(id, "low", "high", "reason").Result()
 
 	if err != nil || len(fields) == 0 {
 		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
@@ -1310,7 +1338,7 @@ func (rdb *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 }
 
 // fetch a list of IPAttributes passed as result parameters
-func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, error) {
+func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, error) {
 
 	ipAttributes := make([]*IPAttributes, 0, len(results))
 
@@ -1339,7 +1367,7 @@ func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, er
 			return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
 		}
 
-		fields, err := rdb.HMGet(id, "low", "high", "reason").Result()
+		fields, err := c.rdb.HMGet(id, "low", "high", "reason").Result()
 
 		if err != nil || len(fields) == 0 {
 			return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
@@ -1393,7 +1421,7 @@ func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, er
 	return ipAttributes, nil
 }
 
-func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
+func (c *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 	intIPs := make([]int64, len(ips))
 	for idx, ip := range ips {
 
@@ -1405,7 +1433,7 @@ func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 		intIPs[idx] = aIP
 	}
 
-	tx := rdb.Pipeline()
+	tx := c.rdb.Pipeline()
 
 	cmds := make([]*redis.StringSliceCmd, 0, len(ips))
 
@@ -1436,7 +1464,7 @@ func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 		} else {
 			id := boundaries[0]
 
-			attr, err := rdb.HMGet(id, "reason", "low", "high").Result()
+			attr, err := c.rdb.HMGet(id, "reason", "low", "high").Result()
 			if err != nil {
 				return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 			}
@@ -1486,8 +1514,8 @@ func (rdb *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 	return result, nil
 }
 
-func (rdb *Client) removeIDs(ids ...string) error {
-	tx := rdb.TxPipeline()
+func (c *Client) removeIDs(ids ...string) error {
+	tx := c.rdb.TxPipeline()
 
 	// remove from sorted set
 	tx.ZRem(IPRangesKey, ids)
@@ -1541,7 +1569,7 @@ func ipsOf(attributes []*IPAttributes) []net.IP {
 // Find returns a non empty reason and nil for an error if the given IP is
 // found within any previously inserted IP range.
 // An error is returned if the request fails and thus should be treated as false.
-func (rdb *Client) Find(ip string) (string, error) {
+func (c *Client) Find(ip string) (string, error) {
 	reqIP, _, err := Boundaries(ip)
 
 	if err != nil {
@@ -1550,7 +1578,7 @@ func (rdb *Client) Find(ip string) (string, error) {
 
 	intIP, _ := IPToInt64(reqIP)
 
-	belowN, aboveN, err := rdb.neighboursInt(intIP, 1)
+	belowN, aboveN, err := c.neighboursInt(intIP, 1)
 	if err != nil {
 		return "", err
 	}
