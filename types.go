@@ -7,16 +7,13 @@ import (
 	"net"
 )
 
-var (
-	// GlobalLowerBoundary is the smallest value possible that indicates the lower boundary of the IP set
-	GlobalLowerBoundary = &IPAttributes{ID: "-inf", LowerBound: false, UpperBound: true}
+// Error is a wrapper for constant errors that are not supposed to be changed.
+type Error string
 
-	//GlobalUpperBoundary is the biggest value possible that indicates the upper boundary of the IP set
-	GlobalUpperBoundary = &IPAttributes{ID: "+inf", LowerBound: true, UpperBound: false}
-)
+func (e Error) Error() string { return string(e) }
 
-// IPAttributes is the composite result type of anything requesting an IP
-type IPAttributes struct {
+// ipAttributes is the composite result type of anything requesting an IP
+type ipAttributes struct {
 	ID         string
 	IP         net.IP
 	Reason     string
@@ -25,7 +22,7 @@ type IPAttributes struct {
 }
 
 // Equal tests if two attribute instances are equal
-func (ia *IPAttributes) Equal(other *IPAttributes) bool {
+func (ia *ipAttributes) Equal(other *ipAttributes) bool {
 
 	return ia.ID != "" &&
 		ia.ID == other.ID &&
@@ -36,7 +33,7 @@ func (ia *IPAttributes) Equal(other *IPAttributes) bool {
 }
 
 // IPInt64 returns the IP's int64 value
-func (ia *IPAttributes) IPInt64() int64 {
+func (ia *ipAttributes) IPInt64() int64 {
 	val, err := ipToInt64(ia.IP)
 	if err != nil {
 		panic(err)
@@ -45,17 +42,17 @@ func (ia *IPAttributes) IPInt64() int64 {
 }
 
 // EqualIP returns true if the IPs of both are equal
-func (ia *IPAttributes) EqualIP(other *IPAttributes) bool {
+func (ia *ipAttributes) EqualIP(other *ipAttributes) bool {
 	return ia.IP.Equal(other.IP)
 }
 
-// IsInfBoundary returns true if ia is either the GlobalUpperBoundary or the GlobalLowerBoundary
-func (ia *IPAttributes) IsInfBoundary() bool {
-	return ia.Equal(GlobalLowerBoundary) || ia.Equal(GlobalUpperBoundary)
+// IsInfBoundary returns true if ia is either the globalUpperBoundary or the globalLowerBoundary
+func (ia *ipAttributes) IsInfBoundary() bool {
+	return ia.Equal(globalLowerBoundary) || ia.Equal(globalUpperBoundary)
 }
 
 // IsSingleBoundary returns true
-func (ia *IPAttributes) IsSingleBoundary() bool {
+func (ia *ipAttributes) IsSingleBoundary() bool {
 	if ia.LowerBound != ia.UpperBound {
 		return true
 	} else if ia.LowerBound && ia.UpperBound {
@@ -64,10 +61,10 @@ func (ia *IPAttributes) IsSingleBoundary() bool {
 	panic(errors.New("did not expect both boundaries to be false"))
 }
 
-func (ia *IPAttributes) String() string {
+func (ia *ipAttributes) String() string {
 	b, err := json.Marshal(ia)
 	if err != nil {
-		panic(fmt.Errorf("failed to marshal IPAttributes: %w", err))
+		panic(fmt.Errorf("failed to marshal ipAttributes: %w", err))
 	}
 	return string(b)
 }

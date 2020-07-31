@@ -179,7 +179,7 @@ func (c *Client) Reset() error {
 
 // insertBoundaries does not do any range checks, allowing for a little bit more performance
 // Side effect: if boundary.ID == "" -> it gets a new UUID
-func (c *Client) insertBoundaries(boundaries []*IPAttributes) error {
+func (c *Client) insertBoundaries(boundaries []*ipAttributes) error {
 
 	tx := c.rdb.TxPipeline()
 	// fill transaction
@@ -259,7 +259,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 		return err
 	}
 
-	singleBoundary := &IPAttributes{
+	singleBoundary := &ipAttributes{
 		IP:         ip,
 		Reason:     reason,
 		LowerBound: true,
@@ -281,7 +281,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			// hit a single value range
 			// simply replace it
 
-			newRange := []*IPAttributes{
+			newRange := []*ipAttributes{
 				singleBoundary,
 			}
 
@@ -295,14 +295,14 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 				return err
 			}
 
-			cutAbove := &IPAttributes{
+			cutAbove := &ipAttributes{
 				IP:         ip,
 				Reason:     hitBoundary.Reason,
 				LowerBound: true,
 			}
 
 			// default case
-			newRange := []*IPAttributes{
+			newRange := []*ipAttributes{
 				singleBoundary,
 				cutAbove,
 			}
@@ -312,7 +312,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 				return err
 			}
 
-			hitCutAbove := (*IPAttributes)(nil)
+			hitCutAbove := (*ipAttributes)(nil)
 			if len(boundaries) == 1 {
 				hitCutAbove = boundaries[0]
 			}
@@ -333,7 +333,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 
 				// remove cut, as there is no cutting of the range above
 				// needed anymore.
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					singleBoundary,
 				}
 			}
@@ -346,7 +346,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			if err != nil {
 				return err
 			}
-			cutBelow := &IPAttributes{
+			cutBelow := &ipAttributes{
 				IP:         ip,
 				Reason:     hitBoundary.Reason,
 				UpperBound: true,
@@ -357,13 +357,13 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 				return err
 			}
 
-			hitCutBelow := (*IPAttributes)(nil)
+			hitCutBelow := (*ipAttributes)(nil)
 			if len(boundaries) == 1 {
 				hitCutBelow = boundaries[0]
 			}
 
 			// default case
-			newRange := []*IPAttributes{
+			newRange := []*ipAttributes{
 				cutBelow,
 				singleBoundary,
 			}
@@ -385,7 +385,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 
 				// remove cut, as there is no cutting of the range above
 				// needed anymore.
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					singleBoundary,
 				}
 			}
@@ -401,7 +401,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			return err
 		}
 
-		cutBelow := &IPAttributes{
+		cutBelow := &ipAttributes{
 			IP:         ip,
 			Reason:     closestBelow.Reason,
 			UpperBound: true,
@@ -412,14 +412,14 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			return err
 		}
 
-		cutAbove := &IPAttributes{
+		cutAbove := &ipAttributes{
 			IP:         ip,
 			Reason:     closestAbove.Reason,
 			LowerBound: true,
 		}
 
 		// default case
-		newRange := []*IPAttributes{
+		newRange := []*ipAttributes{
 			cutBelow,
 			singleBoundary,
 			cutAbove,
@@ -430,7 +430,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			return err
 		}
 
-		hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+		hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
 		if len(boundaries) == 2 {
 			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
 		}
@@ -452,7 +452,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			}
 
 			// no cutting needed
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				singleBoundary,
 			}
 
@@ -466,7 +466,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			}
 
 			// only cutting above needed
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				singleBoundary,
 				cutAbove,
 			}
@@ -481,7 +481,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 			}
 
 			// only cutting below needed
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				cutBelow,
 				singleBoundary,
 			}
@@ -491,7 +491,7 @@ func (c *Client) insertSingleInt(singleInt int64, reason string) error {
 	}
 
 	// not on boundary or inside a range
-	newRange := []*IPAttributes{singleBoundary}
+	newRange := []*ipAttributes{singleBoundary}
 
 	return c.insertBoundaries(newRange)
 }
@@ -519,7 +519,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 	}
 
 	// todo: move cuts to their respective positions
-	cutBelow := &IPAttributes{
+	cutBelow := &ipAttributes{
 		IP:         ip,
 		Reason:     belowLowerClosest.Reason,
 		UpperBound: true,
@@ -530,7 +530,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		return err
 	}
 
-	lowerBound := &IPAttributes{
+	lowerBound := &ipAttributes{
 		IP:         ip,
 		Reason:     reason,
 		LowerBound: true,
@@ -541,7 +541,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		return err
 	}
 
-	upperBound := &IPAttributes{
+	upperBound := &ipAttributes{
 		IP:         ip,
 		Reason:     reason,
 		UpperBound: true,
@@ -552,7 +552,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		return err
 	}
 
-	cutAbove := &IPAttributes{
+	cutAbove := &ipAttributes{
 		IP:         ip,
 		Reason:     aboveUpperClosest.Reason,
 		LowerBound: true,
@@ -566,7 +566,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 	if lenInside == 0 {
 		// nothin inside range
 
-		var newRangeBoundaries []*IPAttributes
+		var newRangeBoundaries []*ipAttributes
 
 		if belowLowerClosest.LowerBound && aboveUpperClosest.UpperBound &&
 			belowLowerClosest.IsSingleBoundary() && aboveUpperClosest.IsSingleBoundary() {
@@ -574,7 +574,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			// len(inside) == 0 => outside range is connected
 
 			// default case
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				cutBelow,
 				lowerBound,
 				upperBound,
@@ -586,7 +586,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				return err
 			}
 
-			hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+			hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
 
 			if len(boundaries) == 2 {
 				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
@@ -604,7 +604,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// hit both boundaries, insert only new range
-				newRangeBoundaries = []*IPAttributes{
+				newRangeBoundaries = []*ipAttributes{
 					lowerBound,
 					upperBound,
 				}
@@ -617,7 +617,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// insert everything except lower cut
-				newRangeBoundaries = []*IPAttributes{
+				newRangeBoundaries = []*ipAttributes{
 					lowerBound,
 					upperBound,
 					cutAbove,
@@ -630,7 +630,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// insert everything except upper cut
-				newRangeBoundaries = []*IPAttributes{
+				newRangeBoundaries = []*ipAttributes{
 					cutBelow,
 					lowerBound,
 					upperBound,
@@ -645,7 +645,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			// belowLowerClosest != aboveUpperClosest, because len(inside) == 0
 			// case 3: -inf below & other range above OR other range below & +inf above
 
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				lowerBound,
 				upperBound,
 			}
@@ -663,7 +663,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 	if lenInside%2 == 0 {
 
 		// default case, cut two ranges
-		newRange := []*IPAttributes{
+		newRange := []*ipAttributes{
 			cutBelow,
 			lowerBound,
 			upperBound,
@@ -676,7 +676,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			// all ranges are inside of the new range.
 			// meaning they are smaller and can be replaced by the new bigger range
 
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				lowerBound,
 				upperBound,
 			}
@@ -689,7 +689,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				return err
 			}
 
-			hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+			hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
 
 			if len(boundaries) == 2 {
 				hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
@@ -712,7 +712,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// no cutting needed
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					lowerBound,
 					upperBound,
 				}
@@ -727,7 +727,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// only cutting above needed
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					lowerBound,
 					upperBound,
 					cutAbove,
@@ -743,7 +743,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// only cutting below needed
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					cutBelow,
 					lowerBound,
 					upperBound,
@@ -755,7 +755,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		} else if insideMostLeft.UpperBound && insideMostLeft.IsSingleBoundary() {
 
 			// default: nothing below the lower bound is hit when cutting
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				cutBelow,
 				lowerBound,
 				upperBound,
@@ -766,7 +766,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				return err
 			}
 
-			hitCutBelow := (*IPAttributes)(nil)
+			hitCutBelow := (*ipAttributes)(nil)
 			if len(boundaries) == 1 {
 				hitCutBelow = boundaries[0]
 
@@ -782,7 +782,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// no cutting needed
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					lowerBound,
 					upperBound,
 				}
@@ -791,7 +791,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			// insideMostRight.LowerBound && insideMostRight.IsSingleBoundary()
 
 			// default: nothing below the lower bound is hit when cutting
-			newRange = []*IPAttributes{
+			newRange = []*ipAttributes{
 				lowerBound,
 				upperBound,
 				cutAbove,
@@ -802,7 +802,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				return err
 			}
 
-			hitCutAbove := (*IPAttributes)(nil)
+			hitCutAbove := (*ipAttributes)(nil)
 
 			if len(boundaries) == 1 {
 				hitCutAbove = boundaries[0]
@@ -818,7 +818,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 				}
 
 				// no cutting needed
-				newRange = []*IPAttributes{
+				newRange = []*ipAttributes{
 					lowerBound,
 					upperBound,
 				}
@@ -846,18 +846,18 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		return err
 	}
 
-	var newRangeBoundaries []*IPAttributes
+	var newRangeBoundaries []*ipAttributes
 
 	if insideMostLeft.LowerBound && insideMostRight.UpperBound {
 		// insideMostLeft.LowerBound && insideMostRight.UpperBound
 		// nothing to cut, everything lies inside of the range
-		newRangeBoundaries = []*IPAttributes{
+		newRangeBoundaries = []*ipAttributes{
 			lowerBound,
 			upperBound,
 		}
 	} else if insideMostLeft.UpperBound && insideMostRight.LowerBound &&
 		insideMostLeft.IsSingleBoundary() && insideMostRight.IsSingleBoundary() {
-		newRangeBoundaries = []*IPAttributes{
+		newRangeBoundaries = []*ipAttributes{
 			cutBelow,
 			lowerBound,
 			upperBound,
@@ -869,7 +869,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			return err
 		}
 
-		hitCutBelow, hitCutAbove := (*IPAttributes)(nil), (*IPAttributes)(nil)
+		hitCutBelow, hitCutAbove := (*ipAttributes)(nil), (*ipAttributes)(nil)
 
 		if len(boundaries) == 2 {
 			hitCutBelow, hitCutAbove = boundaries[0], boundaries[1]
@@ -887,7 +887,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			}
 
 			// hit both boundaries, insert only new range
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				lowerBound,
 				upperBound,
 			}
@@ -900,7 +900,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			}
 
 			// insert everything except lower cut
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				lowerBound,
 				upperBound,
 				cutAbove,
@@ -913,7 +913,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			}
 
 			// insert everything except upper cut
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				cutBelow,
 				lowerBound,
 				upperBound,
@@ -925,7 +925,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		// inside and partially outside the new range
 
 		// default case if not hit anything while cutting
-		newRangeBoundaries = []*IPAttributes{
+		newRangeBoundaries = []*ipAttributes{
 			cutBelow,
 			lowerBound,
 			upperBound,
@@ -936,7 +936,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			return err
 		}
 
-		hitCutBelow := (*IPAttributes)(nil)
+		hitCutBelow := (*ipAttributes)(nil)
 
 		if len(boundaries) == 1 {
 			hitCutBelow = boundaries[0]
@@ -950,7 +950,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			}
 
 			// only insert new range boundaries
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				lowerBound,
 				upperBound,
 			}
@@ -963,7 +963,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 		// is partially inside and partially outside the new range
 
 		// default case that we do not hit anything when cutting above our new range
-		newRangeBoundaries = []*IPAttributes{
+		newRangeBoundaries = []*ipAttributes{
 			lowerBound,
 			upperBound,
 			cutAbove,
@@ -974,7 +974,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			return err
 		}
 
-		hitCutAbove := (*IPAttributes)(nil)
+		hitCutAbove := (*ipAttributes)(nil)
 
 		if len(boundaries) == 1 {
 			hitCutAbove = boundaries[0]
@@ -988,7 +988,7 @@ func (c *Client) insertRangeInt(lowInt64, highInt64 int64, reason string) error 
 			}
 
 			// only insert new range boundaries
-			newRangeBoundaries = []*IPAttributes{
+			newRangeBoundaries = []*ipAttributes{
 				lowerBound,
 				upperBound,
 			}
@@ -1072,8 +1072,8 @@ func (c *Client) insideIntIDs(lowInt64, highInt64 int64) ([]string, error) {
 }
 
 // insideIntRange does not do any checks or ip conversions to be reusable
-func (c *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttributes, err error) {
-	inside = make([]*IPAttributes, 0, 3)
+func (c *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*ipAttributes, err error) {
+	inside = make([]*ipAttributes, 0, 3)
 
 	tx := c.rdb.TxPipeline()
 
@@ -1107,8 +1107,8 @@ func (c *Client) insideIntRange(lowInt64, highInt64 int64) (inside []*IPAttribut
 }
 
 // insideInfRange returns all ranges
-func (c *Client) insideInfRange() (inside []*IPAttributes, err error) {
-	inside = make([]*IPAttributes, 0, 3)
+func (c *Client) insideInfRange() (inside []*ipAttributes, err error) {
+	inside = make([]*ipAttributes, 0, 3)
 
 	tx := c.rdb.TxPipeline()
 
@@ -1141,7 +1141,7 @@ func (c *Client) insideInfRange() (inside []*IPAttributes, err error) {
 	return
 }
 
-func (c *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*IPAttributes, err error) {
+func (c *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, aboveUpper []*ipAttributes, err error) {
 
 	tx := c.rdb.TxPipeline()
 
@@ -1194,10 +1194,10 @@ func (c *Client) belowLowerAboveUpper(lower, upper, num int64) (belowLower, abov
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
-func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*IPAttributes, err error) {
+func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*ipAttributes, err error) {
 
-	below = make([]*IPAttributes, 0, numNeighbours)
-	above = make([]*IPAttributes, 0, numNeighbours)
+	below = make([]*ipAttributes, 0, numNeighbours)
+	above = make([]*ipAttributes, 0, numNeighbours)
 
 	tx := c.rdb.TxPipeline()
 
@@ -1230,13 +1230,13 @@ func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*
 	for _, result := range belowResults {
 		attr, err := c.fetchIPAttributes(result)
 		if errors.Is(err, ErrLowerBoundary) {
-			attr = GlobalLowerBoundary
+			attr = globalLowerBoundary
 		} else if err != nil {
 			return nil, nil, err
 		}
 
 		// prepend for correct order
-		below = append([]*IPAttributes{attr}, below...)
+		below = append([]*ipAttributes{attr}, below...)
 	}
 
 	aboveResults, err := cmdAbove.Result()
@@ -1248,7 +1248,7 @@ func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*
 	for _, result := range aboveResults {
 		attr, err := c.fetchIPAttributes(result)
 		if errors.Is(err, ErrUpperBoundary) {
-			attr = GlobalUpperBoundary
+			attr = globalUpperBoundary
 		} else if err != nil {
 			return nil, nil, err
 		}
@@ -1261,13 +1261,13 @@ func (c *Client) neighboursInt(ofIP int64, numNeighbours uint) (below, above []*
 
 // fetchIpAttributes gets the remaining IP related attributes that belong to the IP range boundary
 // that is encoded in the redis.Z.Score attribute
-func (c *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
+func (c *Client) fetchIPAttributes(result redis.Z) (*ipAttributes, error) {
 
 	switch result.Score {
 	case math.Inf(-1):
-		return GlobalLowerBoundary, nil
+		return globalLowerBoundary, nil
 	case math.Inf(1):
-		return GlobalUpperBoundary, nil
+		return globalUpperBoundary, nil
 	}
 
 	id := ""
@@ -1328,7 +1328,7 @@ func (c *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 		return nil, fmt.Errorf("%w : 'reason' type unknown : %T", ErrNoResult, t)
 	}
 
-	return &IPAttributes{
+	return &ipAttributes{
 		ID:         id,
 		IP:         resultIP,
 		Reason:     reason,
@@ -1337,18 +1337,18 @@ func (c *Client) fetchIPAttributes(result redis.Z) (*IPAttributes, error) {
 	}, nil
 }
 
-// fetch a list of IPAttributes passed as result parameters
-func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, error) {
+// fetch a list of ipAttributes passed as result parameters
+func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*ipAttributes, error) {
 
-	ipAttributes := make([]*IPAttributes, 0, len(results))
+	attributes := make([]*ipAttributes, 0, len(results))
 
 	for _, result := range results {
 		switch result.Score {
 		case math.Inf(-1):
-			ipAttributes = append(ipAttributes, GlobalLowerBoundary)
+			attributes = append(attributes, globalLowerBoundary)
 			continue
 		case math.Inf(1):
-			ipAttributes = append(ipAttributes, GlobalUpperBoundary)
+			attributes = append(attributes, globalUpperBoundary)
 			continue
 		}
 
@@ -1409,7 +1409,7 @@ func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, erro
 			return nil, fmt.Errorf("%w : 'reason' type unknown : %T", ErrNoResult, t)
 		}
 
-		ipAttributes = append(ipAttributes, &IPAttributes{
+		attributes = append(attributes, &ipAttributes{
 			ID:         id,
 			IP:         resultIP,
 			Reason:     reason,
@@ -1418,10 +1418,10 @@ func (c *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, erro
 		})
 	}
 
-	return ipAttributes, nil
+	return attributes, nil
 }
 
-func (c *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
+func (c *Client) fetchBoundaries(ips ...net.IP) ([]*ipAttributes, error) {
 	intIPs := make([]int64, len(ips))
 	for idx, ip := range ips {
 
@@ -1451,7 +1451,7 @@ func (c *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 		return nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
 
-	result := make([]*IPAttributes, 0, len(ips))
+	result := make([]*ipAttributes, 0, len(ips))
 
 	for idx, cmd := range cmds {
 		boundaries, err := cmd.Result()
@@ -1500,7 +1500,7 @@ func (c *Client) fetchBoundaries(ips ...net.IP) ([]*IPAttributes, error) {
 				continue
 			}
 
-			resultAttr := &IPAttributes{
+			resultAttr := &ipAttributes{
 				ID:         id,
 				IP:         ips[idx],
 				Reason:     reason,
@@ -1531,7 +1531,7 @@ func (c *Client) removeIDs(ids ...string) error {
 }
 
 // removes dubplicates that are next to each other.
-func idsOf(attributes []*IPAttributes) []string {
+func idsOf(attributes []*ipAttributes) []string {
 	ids := make([]string, 0, len(attributes))
 
 	for idx, attr := range attributes {
@@ -1548,7 +1548,7 @@ func idsOf(attributes []*IPAttributes) []string {
 }
 
 // removes dubplicates that are next to each other.
-func ipsOf(attributes []*IPAttributes) []net.IP {
+func ipsOf(attributes []*ipAttributes) []net.IP {
 	ids := make([]net.IP, 0, len(attributes))
 
 	for idx, attr := range attributes {

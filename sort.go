@@ -4,7 +4,7 @@ import (
 	"github.com/go-redis/redis"
 )
 
-type byAttributeIP []*IPAttributes
+type byAttributeIP []*ipAttributes
 
 func (a byAttributeIP) Len() int      { return len(a) }
 func (a byAttributeIP) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
