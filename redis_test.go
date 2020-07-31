@@ -254,7 +254,7 @@ type testCase struct {
 // Tests whether the database is in a cosistent state.
 func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 
-	attributes, err := rdb.All()
+	attributes, err := rdb.all()
 	if err != nil {
 		panic(err)
 	}
