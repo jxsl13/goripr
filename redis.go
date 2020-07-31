@@ -1332,6 +1332,9 @@ func (rdb *Client) fetchAllIPAttributes(results ...redis.Z) ([]*IPAttributes, er
 		case string:
 			id = t
 			resultIP, err = Float64ToIP(result.Score)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("%w : member result is not of type string : %T", ErrNoResult, t)
 		}
