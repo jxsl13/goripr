@@ -27,6 +27,19 @@ The compromise should be a slower reaction time compared to the triavial approac
 I guess that the reduction of RAM usage by a factor of about 240x should also improve the response time significantly, as the ~7GB approach was burdening even high performance servers rather heavily.
 The current RAM that is being used is about 30MB, which is acceptable.
 
+## Input format of the package
+
+```txt
+# custom IP range
+84.141.32.1 - 84.141.32.255
+
+# single IP
+84.141.32.1
+
+# subnet mask
+84.141.32.1/24
+```
+
 ## Example
 
 ```Go
@@ -123,6 +136,17 @@ func main() {
         return
     }
 }
+```
+
+### Example text file
+
+```txt
+84.141.32.1 - 84.141.32.255 # any range where the first IP is smaller than the second
+
+2.56.92.0/22 # VPN subnet masking
+
+# without a reason (uses default reason)
+2.56.140.0/24
 ```
 
 ## TODO
