@@ -559,13 +559,13 @@ func (c *Client) Insert(ipRange, reason string) error {
 	aboveCut.SetLowerBound()
 	aboveCut.Reason = aboveNearest.Reason
 
-	insertLowerBound := belowNearest.IsUpperBound() || 
-	belowNearest.IsDoubleBound() ||
-	(belowNearest.IsLowerBound() && !belowNearest.EqualReason(low)) || 
-	
-	insertUpperBound := aboveNearest.IsLowerBound() || 
-	aboveNearest.IsDoubleBound() || 
-	(aboveNearest.IsUpperBound() && !aboveNearest.EqualReason(high)) || 
+	insertLowerBound := belowNearest.IsUpperBound() ||
+		belowNearest.IsDoubleBound() ||
+		(belowNearest.IsLowerBound() && !belowNearest.EqualReason(low))
+
+	insertUpperBound := aboveNearest.IsLowerBound() ||
+		aboveNearest.IsDoubleBound() ||
+		(aboveNearest.IsUpperBound() && !aboveNearest.EqualReason(high))
 
 	if insertLowerBound && belowNearest.IsLowerBound() {
 		// need to cut below
