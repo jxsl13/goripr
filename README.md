@@ -24,3 +24,101 @@ The current RAM that is being used is about 30MB, which is acceptible.
 ## TODO
 
 - Cache requested IPs for like 24 hours in order to improve response time performance for recurring requests (rejoining players)
+
+## Example
+
+```Go
+package main
+
+import (
+    "bufio"
+    "errors"
+    "flag"
+    "log"
+    "os"
+    "regexp"
+
+    "github.com/jxsl13/goripr"
+)
+
+var (
+    rdb           *goripr.Client
+    splitRegex    = regexp.MustCompile(`([0-9.\-\s/]+)#?\s*(.*)\s*$`)
+    defaultReason = "VPN - https://website.com"
+
+    addFile = ""
+    findIP  = ""
+)
+
+func init() {
+    flag.StringVar(&addFile, "add", "", "-add filename.txt")
+    flag.StringVar(&findIP, "find", "", "-find 123.0.0.1")
+    flag.Parse()
+
+    c, err := goripr.NewClient(goripr.Options{
+        Addr: "localhost:6379",
+        DB:   0,
+    })
+    rdb = c
+    if err != nil {
+        panic(err)
+    }
+}
+
+func parseLine(line string) (ip, reason string, err error) {
+    if matches := splitRegex.FindStringSubmatch(line); len(matches) > 0 {
+        return matches[1], matches[2], nil
+    }
+    return "", "", errors.New("empty")
+}
+
+func addIPsToDatabase(filename string) error {
+
+    file, err := os.Open(filename)
+    if err != nil {
+        return err
+    }
+
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        ip, reason, err := parseLine(scanner.Text())
+        if err != nil {
+            continue
+        }
+        if reason == "" {
+            reason = defaultReason
+        }
+
+        err = rdb.Insert(ip, reason)
+        if err != nil {
+            if !errors.Is(err, goripr.ErrInvalidRange) {
+                log.Println(err, "Input:", ip)
+            }
+            continue
+        }
+    }
+    return nil
+}
+
+func main() {
+    defer rdb.Close()
+
+    if addFile != "" {
+        err := addIPsToDatabase(addFile)
+        if err != nil {
+            log.Printf("exit: %v", err)
+            return
+        }
+    }
+
+    if findIP != "" {
+        reason, err := rdb.Find(findIP)
+        if err != nil {
+            log.Println("error:", err)
+            return
+        }
+        log.Println("IP:", findIP, "Reason:", reason)
+        return
+    }
+}
+```
