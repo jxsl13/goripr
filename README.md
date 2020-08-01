@@ -7,7 +7,7 @@
 This package wraps the widely used redis Go client and extends its feature set with a storage efficient mapping of IPv4 IP ranges to specific strings called reasons.
 
 I intend to use this package in my VPN Detection, that's why the term "reason" is used.
-The term refers to ban reason that is given when a player using a VPN (they usually do that with malicious intent).
+The term refers to ban reason that is given when a player using a VPN (they usually do that with malicious intent) gets banned.
 The string can be used in any other way needed, especially containing JSON formatted data.
 
 The general approach is to save the beginning and the end of a range into the database.
