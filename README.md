@@ -14,10 +14,12 @@ The general approach is to save the beginning and the end of a range into the da
 The beginning boundary has the property called `LowerBound` set to true and the last IP in a given range is called an upper boundary with the property `UpperBound` set to true.
 Based on these properties it is possible to determine, how to cut existing boundaries, when new Ip ranges are added to the database.
 
-The VPN detection and especially the ban server used to load all IPs from the given ranges with their corresponding reasons into the database. That is the trivial approach, but proved to be inefficient when having more than 100 million individual IPs stored in the Redis database. At it's peak the database needed ~7GB of RAM, which is not a feasible solution, especially when the source files containing the actual ranges in their respective masked shorthand notation (`x.x.x.x/24`) needed less than one MB of storage space.
+The VPN detection and especially the ban server used to save all IPs from the given ranges with their corresponding reasons into the database. That is the trivial approach, but proved to be inefficient when having more than 100 million individual IPs stored in the Redis database. At it's peak the database needed ~7GB of RAM, which is not a feasible solution, especially when the source files containing the actual ranges in their respective masked shorthand notation (`x.x.x.x/24`) needed less than one MB of storage space.
 
-On the other hand, iterating over ~50k such range strings was also not a feasible solution, especially when ban server should react within ~1 second.
+On the other hand, iterating over ~50k such range strings was also not a feasible solution, especially when the ban server should react within ~1 second.
 The compromise should be a slower reaction time compared to the triavial approach, but way less of a RAM overhead.
+I guess that the reduction of RAM usage by a factor of about 240x should also improve the response time significantly, as the ~7GB approach was burdening even high performance servers rather heavily.
+The current RAM that is being used is about 30MB, which is acceptible.
 
 ## TODO
 
