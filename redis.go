@@ -559,7 +559,15 @@ func (c *Client) Insert(ipRange, reason string) error {
 	aboveCut.SetLowerBound()
 	aboveCut.Reason = aboveNearest.Reason
 
-	if belowNearest.IsLowerBound() {
+	insertLowerBound := belowNearest.IsUpperBound() || 
+	belowNearest.IsDoubleBound() ||
+	(belowNearest.IsLowerBound() && !belowNearest.EqualReason(low)) || 
+	
+	insertUpperBound := aboveNearest.IsLowerBound() || 
+	aboveNearest.IsDoubleBound() || 
+	(aboveNearest.IsUpperBound() && !aboveNearest.EqualReason(high)) || 
+
+	if insertLowerBound && belowNearest.IsLowerBound() {
 		// need to cut below
 		if !belowNearest.EqualIP(belowCut) {
 			// can cut below
@@ -571,16 +579,20 @@ func (c *Client) Insert(ipRange, reason string) error {
 		}
 	}
 
-	if low.EqualIP(high) {
+	if low.EqualIP(high) && insertLowerBound && insertUpperBound {
 		doubleBoundary := low
 		doubleBoundary.SetDoubleBound()
 		doubleBoundary.Insert(tx)
-	} else {
+	} else if insertLowerBound && insertUpperBound {
 		low.Insert(tx)
+		high.Insert(tx)
+	} else if insertLowerBound {
+		low.Insert(tx)
+	} else if insertUpperBound {
 		high.Insert(tx)
 	}
 
-	if aboveNearest.IsUpperBound() {
+	if insertUpperBound && aboveNearest.IsUpperBound() {
 		// need to cut above
 		if !aboveNearest.EqualIP(aboveCut) {
 			// can cut above

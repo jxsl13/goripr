@@ -126,7 +126,7 @@ func TestClient_Insert(t *testing.T) {
 					return
 				}
 
-				if !consistent(rdb, t, ipRange.Range, idx) {
+				if !consistent(rdb, t, "", idx) {
 					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", ipRange.Range)
 					return
 				}
@@ -158,7 +158,7 @@ func TestClient_Find(t *testing.T) {
 					return
 				}
 
-				if !consistent(rdb, t, rangeToFind, idx) {
+				if !consistent(rdb, t, "", idx) {
 					t.Fatalf("database inconsistent")
 				}
 
@@ -358,7 +358,7 @@ func generateBetween(low, high int64) int64 {
 // and and returns a random IP that is within the range
 func generateRange() (ipRange string, insideIP string) {
 
-	const minIP = math.MaxInt32 / 1024 // don't want empty IP bytes
+	const minIP = math.MaxInt32 / 128 // don't want empty IP bytes
 	const maxIP = math.MaxInt32 / 2
 
 	const randBorder = maxIP - minIP
