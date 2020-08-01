@@ -559,24 +559,62 @@ func (c *Client) Insert(ipRange, reason string) error {
 	aboveCut.SetLowerBound()
 	aboveCut.Reason = aboveNearest.Reason
 
-	insertLowerBound := belowNearest.IsUpperBound() ||
-		belowNearest.IsDoubleBound() ||
-		(belowNearest.IsLowerBound() && !belowNearest.EqualReason(low))
+	insertLowerBound := true
+	insertUpperBound := true
 
-	insertUpperBound := aboveNearest.IsLowerBound() ||
-		aboveNearest.IsDoubleBound() ||
-		(aboveNearest.IsUpperBound() && !aboveNearest.EqualReason(high))
-
-	if insertLowerBound && belowNearest.IsLowerBound() {
+	if belowNearest.IsLowerBound() {
 		// need to cut below
 		if !belowNearest.EqualIP(belowCut) {
-			// can cut below
-			belowCut.Insert(tx)
+			// can cut below |----
+			if !belowNearest.EqualReason(low) {
+				// only insert if reasons differ
+				belowCut.Insert(tx)
+			} else {
+				// extend range towards belowNearest
+				insertLowerBound = false
+			}
 		} else {
 			// cannot cut below
-			belowNearest.SetDoubleBound()
-			belowNearest.Insert(tx)
+			if !belowNearest.EqualReason(low) {
+				// if reasons differ, make beLowNearest a single bound
+				belowNearest.SetDoubleBound()
+				belowNearest.Insert(tx)
+			} else {
+				insertLowerBound = false
+			}
 		}
+	} else if belowNearest.IsDoubleBound() && belowNearest.EqualIP(belowCut) && belowNearest.EqualReason(low) {
+		// one IP below we have a single boundary range with the same reason
+		belowNearest.SetLowerBound()
+		belowNearest.Insert(tx)
+	}
+
+	if aboveNearest.IsUpperBound() {
+		// need to cut above
+		if !aboveNearest.EqualIP(aboveCut) {
+			// can cut above -----|
+			if !aboveNearest.EqualReason(high) {
+				// insert if reasons differ
+				aboveCut.Insert(tx)
+			} else {
+				// don't insert, because extends range
+				// to upperbound above
+				insertUpperBound = false
+			}
+
+		} else {
+			// cannot cut above
+			if !aboveNearest.EqualReason(high) {
+				aboveNearest.SetDoubleBound()
+				aboveNearest.Insert(tx)
+			} else {
+				insertUpperBound = false
+			}
+		}
+	} else if aboveNearest.IsDoubleBound() && aboveNearest.EqualIP(aboveCut) && aboveNearest.EqualReason(high) {
+		// one IP above we have a single boundary range with the same reason
+		aboveNearest.SetUpperBound()
+		aboveNearest.Insert(tx)
 	}
 
 	if low.EqualIP(high) && insertLowerBound && insertUpperBound {
@@ -590,18 +628,6 @@ func (c *Client) Insert(ipRange, reason string) error {
 		low.Insert(tx)
 	} else if insertUpperBound {
 		high.Insert(tx)
-	}
-
-	if insertUpperBound && aboveNearest.IsUpperBound() {
-		// need to cut above
-		if !aboveNearest.EqualIP(aboveCut) {
-			// can cut above
-			aboveCut.Insert(tx)
-		} else {
-			// cannot cut above
-			aboveNearest.SetDoubleBound()
-			aboveNearest.Insert(tx)
-		}
 	}
 
 	_, err = tx.Exec()
