@@ -179,6 +179,72 @@ func TestClient_Find(t *testing.T) {
 	}
 }
 
+func TestClient_FindCached(t *testing.T) {
+
+	tests := initTestCasesFind(100)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			for idx, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
+
+				if !consistent(rdb, t, "", idx) {
+					t.Fatalf("database inconsistent")
+				}
+
+				got, err := rdb.Find(ipToFind)
+
+				if (err != nil) != tt.wantErr {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				if got != reasonToFind {
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					return
+				}
+			}
+
+			for _, rir := range tt.ipRanges {
+				rdb.Find(rir.IP)
+			}
+
+			for _, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				rangeToFind := rir.Range
+
+				got, err := rdb.Find(ipToFind)
+
+				if (err != nil) != tt.wantErr {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				// cannot expect reason to stay correct after inserting many
+				// ranges with different reasons.
+				// on thing that is for sure is that the reason must not be empty.
+				if got != "" {
+					t.Errorf("rdb.Find(), REASON EMPTY: RANGE %q IP: %q", rangeToFind, ipToFind)
+					return
+				}
+			}
+
+		})
+	}
+}
+
 func TestClient_Remove(t *testing.T) {
 
 	tests := []testCaseFind{}

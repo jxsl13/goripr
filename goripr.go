@@ -1,5 +1,7 @@
 package goripr
 
+import "time"
+
 var (
 
 	// IPRangesKey contains the key name of the sorted set that contains the IPs (integers)
@@ -8,6 +10,12 @@ var (
 	// DeleteReason is given to a specific deltion range
 	// on a second attept (not aromic) the range is then finally deleted.
 	DeleteReason = "_________________DELETE_________________"
+
+	// CacheKey is the key that is used to cache Find attempty
+	CacheKey = "__________________CACHE__________________"
+
+	// CacheTime is the time after which the "Find" cache expires.
+	CacheTime = 24 * time.Hour
 )
 
 const (

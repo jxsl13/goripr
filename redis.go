@@ -532,12 +532,14 @@ func (c *Client) Insert(ipRange, reason string) error {
 		return err
 	}
 
-	tx := c.rdb.TxPipeline()
-
 	belowN, inside, aboveN, err := c.vicinity(low, high, 1)
 	if err != nil {
 		return err
 	}
+
+	tx := c.rdb.TxPipeline()
+
+	clearCache(tx)
 
 	if len(belowN) < 1 || len(aboveN) < 1 {
 		panic(ErrDatabaseInconsistent)
@@ -645,12 +647,14 @@ func (c *Client) Remove(ipRange string) error {
 		return err
 	}
 
-	tx := c.rdb.TxPipeline()
-
 	below, inside, above, err := c.vicinity(low, high, 1)
 	if err != nil {
 		return err
 	}
+
+	tx := c.rdb.TxPipeline()
+
+	clearCache(tx)
 
 	for _, bnd := range inside {
 		bnd.Remove(tx)
@@ -708,6 +712,11 @@ func (c *Client) Find(ip string) (reason string, err error) {
 	}
 	bnd := newBoundary(ipaddr.IP(), reason, true, true)
 
+	reason, err = c.cached(bnd)
+	if err == nil {
+		return reason, nil
+	}
+
 	below, inside, above, err := c.vicinity(bnd, bnd, 1)
 	if err != nil {
 		return "", err
@@ -715,6 +724,8 @@ func (c *Client) Find(ip string) (reason string, err error) {
 
 	if len(inside) == 1 {
 		found := inside[0]
+
+		c.cache(bnd, found.Reason, CacheTime)
 		return found.Reason, nil
 	}
 
@@ -723,12 +734,29 @@ func (c *Client) Find(ip string) (reason string, err error) {
 
 	if belowNearest.IsLowerBound() && aboveNearest.IsUpperBound() {
 		if belowNearest.EqualReason(aboveNearest) {
+			c.cache(bnd, belowNearest.Reason, CacheTime)
 			return belowNearest.Reason, nil
 		}
 		panic("reasons inconsistent")
 	}
 
 	return "", ErrIPNotFound
+}
+
+// cache a specific boundary
+func (c *Client) cache(bnd boundary, reason string, duration time.Duration) {
+	tx := c.rdb.TxPipeline()
+	tx.HSet(CacheKey, bnd.ID, reason)
+	tx.HSetNX(CacheKey, bnd.ID, duration)
+	tx.Exec()
+}
+
+func clearCache(tx redis.Pipeliner) {
+	tx.Del(CacheKey)
+}
+
+func (c *Client) cached(bnd boundary) (string, error) {
+	return c.rdb.HGet(CacheKey, bnd.ID).Result()
 }
 
 func parseRange(r, reason string) (low, high boundary, err error) {
