@@ -22,7 +22,7 @@ const (
 	ErrDatabaseInconsistent = Error("the databe is in an inconsistent state")
 
 	// ErrInvalidRange is returned when a passed string is not a valid range
-	ErrInvalidRange = Error("invalid range passed, use either of these: <IP>, <IP>/<0-32>, <IP> - <IP>")
+	ErrInvalidRange = Error("invalid range passed, use either of these: <IP>, <IP>/<1-32>, <IP> - <IP>")
 
 	// ErrIPv6NotSupported is returned if an IPv6 range or IP input is detected.
 	ErrIPv6NotSupported = Error("IPv6 ranges are not supported")
