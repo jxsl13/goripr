@@ -82,7 +82,7 @@ var (
 
 func TestClient_Insert(t *testing.T) {
 	// generate random ranges
-	initRanges(100)
+	initRanges(200)
 
 	// initial test
 	tests := []testCase{
@@ -99,7 +99,7 @@ func TestClient_Insert(t *testing.T) {
 	}
 
 	// shuffle initial test to generate new tests
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		seed := time.Now().UnixNano()
 
 		shuffledRange := make([]rangeReason, len(ranges))
@@ -449,11 +449,13 @@ func shuffle(seed int64, a []rangeReason) []rangeReason {
 
 func initRanges(num int) {
 	// generate ranges
-	for i := 0; i < num; i++ {
+	for i := 1; i <= num; i++ {
 		ipRange, _ := generateRange()
+		rand.Seed(time.Now().UnixNano())
+
 		ranges = append(ranges, rangeReason{
 			Range:  ipRange,
-			Reason: fmt.Sprintf("random %5d", i),
+			Reason: fmt.Sprintf("random %v", rand.Int63n(int64(i))),
 		})
 	}
 }
@@ -478,12 +480,13 @@ var (
 
 func initRangesAndIPsWithin(num int) {
 	// generate ranges
-	for i := 0; i < num; i++ {
+	for i := 1; i <= num; i++ {
 		ipRange, ip := generateRange()
+		rand.Seed(time.Now().UnixNano())
 		findRanges = append(findRanges, rangeIPReason{
 			Range:  ipRange,
 			IP:     ip,
-			Reason: fmt.Sprintf("random %5d", i),
+			Reason: fmt.Sprintf("random %v", rand.Int63n(int64(i))),
 		})
 	}
 }
