@@ -22,5 +22,3 @@ The compromise should be a slower reaction time compared to the triavial approac
 ## TODO
 
 - Cache requested IPs for like 24 hours in order to improve response time performance for recurring requests (rejoining players)
-- Add a `Clean/Sweep/Vacuum` function that removes single `UpperBound`s that are followed by `LowerBound`s sharing the exact same reason string (will be more complex, as we support single value ranges)
-- `Sweep` automatically when inserting, especially if the new range completely lies within a bigger already existing range. All that's needed are the neighbours of the range.
