@@ -704,9 +704,9 @@ func (c *Client) Find(ip string) (reason string, err error) {
 
 	ipaddr, err := netaddr.NewIPAddress(ip, 4)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w : %v", ErrInvalidIP, err)
 	}
-	bnd := newBoundary(ipaddr.IP(), reason, true, true)
+	bnd := newBoundary(ipaddr.IP(), "", true, true)
 
 	below, inside, above, err := c.vicinity(bnd, bnd, 1)
 	if err != nil {
