@@ -216,6 +216,18 @@ func (b *boundary) Insert(tx redis.Pipeliner) redis.Pipeliner {
 	return tx
 }
 
+// Update adds the needed commands to the transaction in order to update the assiciated attributes of the
+// unserlying IP. The IP itself cannot be updated with this command.
+func (b *boundary) Update(tx redis.Pipeliner) redis.Pipeliner {
+	tx.HMSet(b.ID,
+		map[string]interface{}{
+			"low":    b.LowerBound,
+			"high":   b.UpperBound,
+			"reason": b.Reason,
+		})
+	return tx
+}
+
 // Remove adds the necessary commands to the transaction in order to be properly removed.
 func (b *boundary) Remove(tx redis.Pipeliner) redis.Pipeliner {
 	tx.ZRem(IPRangesKey, b.ID)

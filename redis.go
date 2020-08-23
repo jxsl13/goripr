@@ -771,3 +771,88 @@ func parseRange(r, reason string) (low, high boundary, err error) {
 	}
 	return dummy, dummy, ErrInvalidRange
 }
+
+// UpdateFunc updates the previous reason to a new reason.
+type UpdateFunc func(oldReason string) (newReason string)
+
+// UpdateReasonOf updates the reason of the range that contains the passed ip.
+func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ipaddr, err := netaddr.NewIPAddress(ip, 4)
+	if err != nil {
+		return fmt.Errorf("%w : %v", ErrInvalidIP, err)
+	}
+	bnd := newBoundary(ipaddr.IP(), "", true, true)
+
+	below, inside, above, err := c.vicinity(bnd, bnd, 1)
+	if err != nil {
+		return err
+	}
+
+	// must exist, because of +-inf boundaries
+	belowNearest := below[0]
+	aboveNearest := above[0]
+
+	tx := c.rdb.TxPipeline()
+
+	if len(inside) == 1 {
+		found := inside[0]
+
+		// needs to be updates in all cases
+		found.Reason = fn(found.Reason)
+
+		// we either hit a double boundary, a lower or an upper boundary
+		if found.IsDoubleBound() {
+			// hit single ip range
+			found.Update(tx)
+		} else if found.IsLowerBound() {
+			if aboveNearest.IsUpperBound() {
+				// lower bound
+				found.Update(tx)
+
+				// upper bound
+				aboveNearest.Reason = fn(aboveNearest.Reason)
+				aboveNearest.Update(tx)
+			} else {
+				panic("database inconsistent")
+			}
+		} else {
+			// upperbound
+			if belowNearest.IsLowerBound() {
+
+				// lower bound
+				belowNearest.Reason = fn(aboveNearest.Reason)
+				belowNearest.Update(tx)
+
+				// upper bound
+				found.Insert(tx)
+			} else {
+				panic("database inconsistent")
+			}
+		}
+
+		_, err = tx.Exec()
+		return err
+	}
+
+	// len(inside) == 0
+	// anything else should logically be impossible
+
+	if belowNearest.IsLowerBound() && aboveNearest.IsUpperBound() {
+		if belowNearest.EqualReason(aboveNearest) {
+			belowNearest.Reason = fn(belowNearest.Reason)
+			aboveNearest.Reason = fn(aboveNearest.Reason)
+
+			belowNearest.Update(tx)
+			aboveNearest.Update(tx)
+
+			_, err = tx.Exec()
+			return err
+		}
+		panic("database reasons inconsistent")
+	}
+
+	return ErrIPNotFound
+}

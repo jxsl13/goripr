@@ -245,6 +245,80 @@ func TestClient_Remove(t *testing.T) {
 	}
 }
 
+func TestClient_UpdateReasonOf(t *testing.T) {
+
+	tests := []testCaseFind{}
+
+	tests = append(tests, initTestCasesFind(100)...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rdb := initRDB(0)
+			defer rdb.Close()
+
+			for idx, rir := range tt.ipRanges {
+				ipToFind := rir.IP
+				reasonToFind := rir.Reason
+				rangeToFind := rir.Range
+
+				err := rdb.Insert(rangeToFind, reasonToFind)
+				if err != nil {
+					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
+					t.FailNow()
+				}
+
+				if !consistent(rdb, t, rangeToFind, idx) {
+					t.Errorf("rdb.Insert() error : Database INCONSISTENT after inserting range: %s", rangeToFind)
+					t.FailNow()
+				}
+				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
+
+				got, err := rdb.Find(ipToFind)
+
+				if err != nil {
+					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
+					return
+				}
+
+				if got != reasonToFind {
+					t.Errorf("rdb.Find(), WRONG REASON = %q, want %q", got, reasonToFind)
+					t.FailNow()
+				}
+
+				newReason := randomString()
+				err = rdb.UpdateReasonOf(ipToFind, func(s string) string {
+					return newReason
+				})
+
+				if err != nil {
+					t.Errorf("rdb.UpdateReasonOf(), RETURED ERROR = %q", err)
+					t.FailNow()
+				}
+
+				if !consistent(rdb, t, "", 0) {
+					t.Errorf("rdb.UpdateReasonOf() error : Database INCONSISTENT after updating range: %s, ip: %s with new reason: %s", rangeToFind, ipToFind, newReason)
+					t.FailNow()
+				}
+				t.Logf("rdb.UpdateReasonOf(): Database CONSISTENT after updating range: %s, ip: %s with new reason: %s", rangeToFind, ipToFind, newReason)
+
+				foundReason, err := rdb.Find(ipToFind)
+
+				// should be found after update
+				if err != nil {
+					t.Errorf("rdb.Find(): FOUND AFTER RANGE UPDATE error = %q\nRange: %q IP: %s", err.Error(), rangeToFind, ipToFind)
+					t.FailNow()
+				}
+
+				if foundReason != newReason {
+					t.Errorf("rdb.Find(): REASON MISMATCH error = %q\nRange: %q IP: %s, old reason: %q, new reason: %q, found reason: %q", err.Error(), rangeToFind, ipToFind, reasonToFind, newReason, foundReason)
+					t.FailNow()
+				}
+			}
+		})
+	}
+}
+
 type testCase struct {
 	name     string
 	ipRanges []rangeReason
@@ -489,6 +563,11 @@ func initRangesAndIPsWithin(num int) {
 			Reason: fmt.Sprintf("random %v", rand.Int63n(int64(i))),
 		})
 	}
+}
+
+func randomString() string {
+	rand.Seed(time.Now().UnixNano())
+	return fmt.Sprintf("random %v", rand.Int63())
 }
 
 func shuffleFindTest(seed int64, a []rangeIPReason) []rangeIPReason {
