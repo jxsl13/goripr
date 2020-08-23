@@ -800,12 +800,13 @@ func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
 	if len(inside) == 1 {
 		found := inside[0]
 
-		// needs to be updates in all cases
+		// needs to be updated in all cases
 		found.Reason = fn(found.Reason)
 
 		// we either hit a double boundary, a lower or an upper boundary
 		if found.IsDoubleBound() {
 			// hit single ip range
+			// lower & upper boundary
 			found.Update(tx)
 		} else if found.IsLowerBound() {
 			if aboveNearest.IsUpperBound() {
