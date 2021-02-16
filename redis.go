@@ -698,6 +698,9 @@ func (c *Client) Remove(ipRange string) error {
 
 // Find searches for the requested IP in the database. If the IP is found within any previously inserted range,
 // the associated reason is returned. If it is not found, an error is returned instead.
+// returns a reason or either
+// ErrIPNotFound if no IP was found
+// ErrDatabaseInconsistent if the database has become inconsistent.
 func (c *Client) Find(ip string) (reason string, err error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
