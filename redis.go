@@ -718,6 +718,11 @@ func (c *Client) Find(ip string) (reason string, err error) {
 		return found.Reason, nil
 	}
 
+	if len(below) == 0 || len(above) == 0 {
+		fmt.Println("Your database is inconsistent, please make sure it is not exposed to the public.")
+		return "", ErrDatabaseInconsistent
+	}
+
 	belowNearest := below[0]
 	aboveNearest := above[0]
 
