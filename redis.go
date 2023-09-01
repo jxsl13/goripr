@@ -1,92 +1,20 @@
 package goripr
 
 import (
-	"crypto/tls"
+	"context"
 	"fmt"
 	"math"
-	"net"
 	"regexp"
 	"sort"
 	"sync"
-	"time"
 
-	"github.com/go-redis/redis"
-	"github.com/xgfone/netaddr"
+	"github.com/redis/go-redis/v9"
+	"github.com/xgfone/go-netaddr"
 )
 
 var (
 	customIPRangeRegex = regexp.MustCompile(`([0-9a-f:.]{7,41})\s*-\s*([0-9a-f:.]{7,41})`)
 )
-
-// Options configures the redis database connection
-type Options struct {
-	// The network type, either tcp or unix.
-	// Default is tcp.
-	Network string
-	// host:port address.
-	Addr string
-
-	// Dialer creates new network connection and has priority over
-	// Network and Addr options.
-	Dialer func() (net.Conn, error)
-
-	// Hook that is called when new connection is established.
-	OnConnect func(*redis.Conn) error
-
-	// Optional password. Must match the password specified in the
-	// requirepass server configuration option.
-	Password string
-	// Database to be selected after connecting to the server.
-	DB int
-
-	// Maximum number of retries before giving up.
-	// Default is to not retry failed commands.
-	MaxRetries int
-	// Minimum backoff between each retry.
-	// Default is 8 milliseconds; -1 disables backoff.
-	MinRetryBackoff time.Duration
-	// Maximum backoff between each retry.
-	// Default is 512 milliseconds; -1 disables backoff.
-	MaxRetryBackoff time.Duration
-
-	// Dial timeout for establishing new connections.
-	// Default is 5 seconds.
-	DialTimeout time.Duration
-	// Timeout for socket reads. If reached, commands will fail
-	// with a timeout instead of blocking. Use value -1 for no timeout and 0 for default.
-	// Default is 3 seconds.
-	ReadTimeout time.Duration
-	// Timeout for socket writes. If reached, commands will fail
-	// with a timeout instead of blocking.
-	// Default is ReadTimeout.
-	WriteTimeout time.Duration
-
-	// Maximum number of socket connections.
-	// Default is 10 connections per every CPU as reported by runtime.NumCPU.
-	PoolSize int
-	// Minimum number of idle connections which is useful when establishing
-	// new connection is slow.
-	MinIdleConns int
-	// Connection age at which client retires (closes) the connection.
-	// Default is to not close aged connections.
-	MaxConnAge time.Duration
-	// Amount of time client waits for connection if all connections
-	// are busy before returning an error.
-	// Default is ReadTimeout + 1 second.
-	PoolTimeout time.Duration
-	// Amount of time after which client closes idle connections.
-	// Should be less than server's timeout.
-	// Default is 5 minutes. -1 disables idle timeout check.
-	IdleTimeout time.Duration
-	// Frequency of idle checks made by idle connections reaper.
-	// Default is 1 minute. -1 disables idle connections reaper,
-	// but idle connections are still discarded by the client
-	// if IdleTimeout is set.
-	IdleCheckFrequency time.Duration
-
-	// TLS Config to use. When set TLS will be negotiated.
-	TLSConfig *tls.Config
-}
 
 // Client is an extended version of the redis.Client
 type Client struct {
@@ -95,31 +23,38 @@ type Client struct {
 }
 
 // NewClient creates a new redi client connection
-func NewClient(options Options) (*Client, error) {
+func NewClient(ctx context.Context, options Options) (*Client, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Network:            options.Network,
-		Addr:               options.Addr,
-		Dialer:             options.Dialer,
-		OnConnect:          options.OnConnect,
-		Password:           options.Password,
-		DB:                 options.DB,
-		MaxRetries:         options.MaxRetries,
-		MinRetryBackoff:    options.MinRetryBackoff,
-		MaxRetryBackoff:    options.MaxRetryBackoff,
-		DialTimeout:        options.DialTimeout,
-		ReadTimeout:        options.ReadTimeout,
-		WriteTimeout:       options.WriteTimeout,
-		PoolSize:           options.PoolSize,
-		MinIdleConns:       options.MinIdleConns,
-		MaxConnAge:         options.MaxConnAge,
-		PoolTimeout:        options.PoolTimeout,
-		IdleTimeout:        options.IdleTimeout,
-		IdleCheckFrequency: options.IdleCheckFrequency,
-		TLSConfig:          options.TLSConfig,
+		Addr:                  options.Addr,
+		Network:               options.Network,
+		ClientName:            options.ClientName,
+		Dialer:                options.Dialer,
+		OnConnect:             options.OnConnect,
+		Protocol:              options.Protocol,
+		Username:              options.Username,
+		Password:              options.Password,
+		CredentialsProvider:   options.CredentialsProvider,
+		DB:                    options.DB,
+		MaxRetries:            options.MaxRetries,
+		MinRetryBackoff:       options.MinRetryBackoff,
+		MaxRetryBackoff:       options.MaxRetryBackoff,
+		DialTimeout:           options.DialTimeout,
+		ReadTimeout:           options.ReadTimeout,
+		WriteTimeout:          options.WriteTimeout,
+		ContextTimeoutEnabled: options.ContextTimeoutEnabled,
+		PoolFIFO:              options.PoolFIFO,
+		PoolSize:              options.PoolSize,
+		PoolTimeout:           options.PoolTimeout,
+		MinIdleConns:          options.MinIdleConns,
+		MaxIdleConns:          options.MaxIdleConns,
+		ConnMaxIdleTime:       options.ConnMaxIdleTime,
+		ConnMaxLifetime:       options.ConnMaxLifetime,
+		TLSConfig:             options.TLSConfig,
+		Limiter:               options.Limiter,
 	})
 
 	// ping test
-	result, err := rdb.Ping().Result()
+	result, err := rdb.Ping(ctx).Result()
 
 	if err != nil {
 		rdb.Close()
@@ -135,7 +70,7 @@ func NewClient(options Options) (*Client, error) {
 		rdb: rdb,
 	}
 
-	err = client.init()
+	err = client.init(ctx)
 	if err != nil {
 		client.Close()
 		return nil, fmt.Errorf("%w : %v", ErrDatabaseInit, err)
@@ -145,13 +80,13 @@ func NewClient(options Options) (*Client, error) {
 }
 
 // init the GlobalBoundaries
-func (c *Client) init() error {
+func (c *Client) init(ctx context.Context) error {
 	// idempotent and important to mark these boundaries
 	// we always want to have the infinite boundaries available in order to tell,
 	// that there are no more elements below or above some other element.
 	tx := c.rdb.TxPipeline()
 
-	tx.ZAdd(IPRangesKey,
+	tx.ZAdd(ctx, IPRangesKey,
 		redis.Z{
 			Score:  math.Inf(-1),
 			Member: "-inf",
@@ -162,19 +97,19 @@ func (c *Client) init() error {
 		},
 	)
 
-	tx.HMSet("-inf", map[string]interface{}{
+	tx.HMSet(ctx, "-inf", map[string]interface{}{
 		"low":    false,
 		"high":   true,
 		"reason": "-inf",
 	})
 
-	tx.HMSet("+inf", map[string]interface{}{
+	tx.HMSet(ctx, "+inf", map[string]interface{}{
 		"low":    true,
 		"high":   false,
 		"reason": "+inf",
 	})
-	_, err := tx.Exec()
 
+	_, err := tx.Exec(ctx)
 	return err
 }
 
@@ -184,29 +119,29 @@ func (c *Client) Close() error {
 }
 
 // Flush removes all of the database content including the global bounadaries.
-func (c *Client) Flush() error {
+func (c *Client) Flush(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, err := c.rdb.FlushDB().Result()
+	_, err := c.rdb.FlushDB(ctx).Result()
 	return err
 }
 
 // Reset the database except for its global boundaries
-func (c *Client) Reset() error {
+func (c *Client) Reset(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, err := c.rdb.FlushDB().Result(); err != nil {
+	if _, err := c.rdb.FlushDB(ctx).Result(); err != nil {
 		return err
 	}
-	return c.init()
+	return c.init(ctx)
 }
 
 // all retrieves all range boundaries that are within the database.
-func (c *Client) all() (inside []boundary, err error) {
+func (c *Client) all(ctx context.Context) (inside []boundary, err error) {
 
-	results, err := c.rdb.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+	results, err := c.rdb.ZRangeByScoreWithScores(ctx, IPRangesKey, &redis.ZRangeBy{
 		Min: "-inf",
 		Max: "+inf",
 	}).Result()
@@ -224,11 +159,11 @@ func (c *Client) all() (inside []boundary, err error) {
 
 	cmds := make([]*redis.SliceCmd, 0, len(inside))
 	for _, bnd := range inside {
-		cmd := bnd.Get(tx)
+		cmd := bnd.Get(ctx, tx)
 		cmds = append(cmds, cmd)
 	}
 
-	_, err = tx.Exec()
+	_, err = tx.Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +212,7 @@ func (c *Client) all() (inside []boundary, err error) {
 }
 
 // neighboursInt does not do any checks, thus making it reusable in other methods without check overhead
-func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above []boundary, err error) {
+func (c *Client) vicinity(ctx context.Context, low, high boundary, num int64) (below, inside, above []boundary, err error) {
 
 	if num < 0 {
 		panic("passed num parameter has to be >= 0")
@@ -289,27 +224,26 @@ func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above [
 
 	tx := c.rdb.TxPipeline()
 
-	cmdBelow := tx.ZRevRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+	cmdBelow := tx.ZRevRangeByScoreWithScores(ctx, IPRangesKey, &redis.ZRangeBy{
 		Min:    "-inf",
 		Max:    low.Below().Int64String(),
 		Offset: 0,
 		Count:  num,
 	})
 
-	cmdInside := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+	cmdInside := tx.ZRangeByScoreWithScores(ctx, IPRangesKey, &redis.ZRangeBy{
 		Min: low.Int64String(),
 		Max: high.Int64String(),
 	})
 
-	cmdAbove := tx.ZRangeByScoreWithScores(IPRangesKey, redis.ZRangeBy{
+	cmdAbove := tx.ZRangeByScoreWithScores(ctx, IPRangesKey, &redis.ZRangeBy{
 		Min:    high.Above().Int64String(),
 		Max:    "+inf",
 		Offset: 0,
 		Count:  num,
 	})
 
-	_, err = tx.Exec()
-
+	_, err = tx.Exec(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
@@ -362,20 +296,20 @@ func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above [
 
 	belowAttrCmds := make([]*redis.SliceCmd, 0, len(below))
 	for _, bnd := range below {
-		belowAttrCmds = append(belowAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+		belowAttrCmds = append(belowAttrCmds, tx.HMGet(ctx, bnd.ID, "low", "high", "reason"))
 	}
 
 	insideAttrCmds := make([]*redis.SliceCmd, 0, len(inside))
 	for _, bnd := range inside {
-		insideAttrCmds = append(insideAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+		insideAttrCmds = append(insideAttrCmds, tx.HMGet(ctx, bnd.ID, "low", "high", "reason"))
 	}
 
 	aboveAttrCmds := make([]*redis.SliceCmd, 0, len(above))
 	for _, bnd := range above {
-		aboveAttrCmds = append(aboveAttrCmds, tx.HMGet(bnd.ID, "low", "high", "reason"))
+		aboveAttrCmds = append(aboveAttrCmds, tx.HMGet(ctx, bnd.ID, "low", "high", "reason"))
 	}
 
-	_, err = tx.Exec()
+	_, err = tx.Exec(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%w : %v", ErrNoResult, err)
 	}
@@ -523,7 +457,7 @@ func (c *Client) vicinity(low, high boundary, num int64) (below, inside, above [
 }
 
 // Insert inserts a new IP range or IP into the database with an associated reason string
-func (c *Client) Insert(ipRange, reason string) error {
+func (c *Client) Insert(ctx context.Context, ipRange, reason string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -534,18 +468,18 @@ func (c *Client) Insert(ipRange, reason string) error {
 
 	tx := c.rdb.TxPipeline()
 
-	belowN, inside, aboveN, err := c.vicinity(low, high, 1)
+	belowN, inside, aboveN, err := c.vicinity(ctx, low, high, 1)
 	if err != nil {
 		return err
 	}
 
-	if len(belowN) < 1 || len(aboveN) < 1 {
+	if len(belowN) == 0 || len(aboveN) == 0 {
 		panic(ErrDatabaseInconsistent)
 	}
 
 	// remove inside
 	for _, bnd := range inside {
-		bnd.Remove(tx)
+		bnd.Remove(ctx, tx)
 	}
 
 	belowNearest := belowN[0]
@@ -568,7 +502,7 @@ func (c *Client) Insert(ipRange, reason string) error {
 			// can cut below |----
 			if !belowNearest.EqualReason(low) {
 				// only insert if reasons differ
-				belowCut.Insert(tx)
+				belowCut.Insert(ctx, tx)
 			} else {
 				// extend range towards belowNearest
 				insertLowerBound = false
@@ -578,7 +512,7 @@ func (c *Client) Insert(ipRange, reason string) error {
 			if !belowNearest.EqualReason(low) {
 				// if reasons differ, make beLowNearest a single bound
 				belowNearest.SetDoubleBound()
-				belowNearest.Insert(tx)
+				belowNearest.Insert(ctx, tx)
 			} else {
 				insertLowerBound = false
 			}
@@ -586,7 +520,7 @@ func (c *Client) Insert(ipRange, reason string) error {
 	} else if belowNearest.IsDoubleBound() && belowNearest.EqualIP(belowCut) && belowNearest.EqualReason(low) {
 		// one IP below we have a single boundary range with the same reason
 		belowNearest.SetLowerBound()
-		belowNearest.Insert(tx)
+		belowNearest.Insert(ctx, tx)
 	}
 
 	if aboveNearest.IsUpperBound() {
@@ -595,7 +529,7 @@ func (c *Client) Insert(ipRange, reason string) error {
 			// can cut above -----|
 			if !aboveNearest.EqualReason(high) {
 				// insert if reasons differ
-				aboveCut.Insert(tx)
+				aboveCut.Insert(ctx, tx)
 			} else {
 				// don't insert, because extends range
 				// to upperbound above
@@ -606,7 +540,7 @@ func (c *Client) Insert(ipRange, reason string) error {
 			// cannot cut above
 			if !aboveNearest.EqualReason(high) {
 				aboveNearest.SetDoubleBound()
-				aboveNearest.Insert(tx)
+				aboveNearest.Insert(ctx, tx)
 			} else {
 				insertUpperBound = false
 			}
@@ -614,28 +548,28 @@ func (c *Client) Insert(ipRange, reason string) error {
 	} else if aboveNearest.IsDoubleBound() && aboveNearest.EqualIP(aboveCut) && aboveNearest.EqualReason(high) {
 		// one IP above we have a single boundary range with the same reason
 		aboveNearest.SetUpperBound()
-		aboveNearest.Insert(tx)
+		aboveNearest.Insert(ctx, tx)
 	}
 
 	if low.EqualIP(high) && insertLowerBound && insertUpperBound {
 		doubleBoundary := low
 		doubleBoundary.SetDoubleBound()
-		doubleBoundary.Insert(tx)
+		doubleBoundary.Insert(ctx, tx)
 	} else if insertLowerBound && insertUpperBound {
-		low.Insert(tx)
-		high.Insert(tx)
+		low.Insert(ctx, tx)
+		high.Insert(ctx, tx)
 	} else if insertLowerBound {
-		low.Insert(tx)
+		low.Insert(ctx, tx)
 	} else if insertUpperBound {
-		high.Insert(tx)
+		high.Insert(ctx, tx)
 	}
 
-	_, err = tx.Exec()
+	_, err = tx.Exec(ctx)
 	return err
 }
 
 // Remove removes an IP range from the database.
-func (c *Client) Remove(ipRange string) error {
+func (c *Client) Remove(ctx context.Context, ipRange string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -647,13 +581,13 @@ func (c *Client) Remove(ipRange string) error {
 
 	tx := c.rdb.TxPipeline()
 
-	below, inside, above, err := c.vicinity(low, high, 1)
+	below, inside, above, err := c.vicinity(ctx, low, high, 1)
 	if err != nil {
 		return err
 	}
 
 	for _, bnd := range inside {
-		bnd.Remove(tx)
+		bnd.Remove(ctx, tx)
 	}
 
 	belowNearest := below[0]
@@ -671,11 +605,11 @@ func (c *Client) Remove(ipRange string) error {
 		// need to cut below
 		if !belowNearest.EqualIP(belowCut) {
 			// can cut
-			belowCut.Insert(tx)
+			belowCut.Insert(ctx, tx)
 		} else {
 			// cannot cut
 			belowNearest.SetDoubleBound()
-			belowNearest.Insert(tx)
+			belowNearest.Insert(ctx, tx)
 		}
 	}
 
@@ -683,16 +617,16 @@ func (c *Client) Remove(ipRange string) error {
 		// need to cut above
 		if !aboveNearest.EqualIP(aboveCut) {
 			// can cut above
-			aboveCut.Insert(tx)
+			aboveCut.Insert(ctx, tx)
 		} else {
 			// cannot cut above
 			aboveNearest.SetDoubleBound()
-			aboveNearest.Insert(tx)
+			aboveNearest.Insert(ctx, tx)
 
 		}
 	}
 
-	_, err = tx.Exec()
+	_, err = tx.Exec(ctx)
 	return err
 }
 
@@ -701,7 +635,7 @@ func (c *Client) Remove(ipRange string) error {
 // returns a reason or either
 // ErrIPNotFound if no IP was found
 // ErrDatabaseInconsistent if the database has become inconsistent.
-func (c *Client) Find(ip string) (reason string, err error) {
+func (c *Client) Find(ctx context.Context, ip string) (reason string, err error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -711,7 +645,7 @@ func (c *Client) Find(ip string) (reason string, err error) {
 	}
 	bnd := newBoundary(ipaddr.IP(), "", true, true)
 
-	below, inside, above, err := c.vicinity(bnd, bnd, 1)
+	below, inside, above, err := c.vicinity(ctx, bnd, bnd, 1)
 	if err != nil {
 		return "", err
 	}
@@ -784,7 +718,7 @@ func parseRange(r, reason string) (low, high boundary, err error) {
 type UpdateFunc func(oldReason string) (newReason string)
 
 // UpdateReasonOf updates the reason of the range that contains the passed ip.
-func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
+func (c *Client) UpdateReasonOf(ctx context.Context, ip string, fn UpdateFunc) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -794,7 +728,7 @@ func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
 	}
 	bnd := newBoundary(ipaddr.IP(), "", true, true)
 
-	below, inside, above, err := c.vicinity(bnd, bnd, 1)
+	below, inside, above, err := c.vicinity(ctx, bnd, bnd, 1)
 	if err != nil {
 		return err
 	}
@@ -815,15 +749,15 @@ func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
 		if found.IsDoubleBound() {
 			// hit single ip range
 			// lower & upper boundary
-			found.Update(tx)
+			found.Update(ctx, tx)
 		} else if found.IsLowerBound() {
 			if aboveNearest.IsUpperBound() {
 				// lower bound
-				found.Update(tx)
+				found.Update(ctx, tx)
 
 				// upper bound
 				aboveNearest.Reason = fn(aboveNearest.Reason)
-				aboveNearest.Update(tx)
+				aboveNearest.Update(ctx, tx)
 			} else {
 				panic("database inconsistent")
 			}
@@ -833,16 +767,16 @@ func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
 
 				// lower bound
 				belowNearest.Reason = fn(aboveNearest.Reason)
-				belowNearest.Update(tx)
+				belowNearest.Update(ctx, tx)
 
 				// upper bound
-				found.Insert(tx)
+				found.Insert(ctx, tx)
 			} else {
 				panic("database inconsistent")
 			}
 		}
 
-		_, err = tx.Exec()
+		_, err = tx.Exec(ctx)
 		return err
 	}
 
@@ -854,10 +788,10 @@ func (c *Client) UpdateReasonOf(ip string, fn UpdateFunc) (err error) {
 			belowNearest.Reason = fn(belowNearest.Reason)
 			aboveNearest.Reason = fn(aboveNearest.Reason)
 
-			belowNearest.Update(tx)
-			aboveNearest.Update(tx)
+			belowNearest.Update(ctx, tx)
+			aboveNearest.Update(ctx, tx)
 
-			_, err = tx.Exec()
+			_, err = tx.Exec(ctx)
 			return err
 		}
 		panic("database reasons inconsistent")

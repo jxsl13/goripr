@@ -6,7 +6,7 @@ var (
 	IPRangesKey = "________________IP_RANGES________________"
 
 	// DeleteReason is given to a specific deltion range
-	// on a second attept (not aromic) the range is then finally deleted.
+	// on a second attept (not atomic) the range is then finally deleted.
 	DeleteReason = "_________________DELETE_________________"
 )
 

@@ -1,6 +1,7 @@
 package goripr
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -8,9 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgfone/netaddr"
-	//"runtime"
-	//"strings"
+	"github.com/xgfone/go-netaddr"
 )
 
 type rangeReason struct {
@@ -121,7 +120,7 @@ func TestClient_Insert(t *testing.T) {
 			// consistency after every insert
 			for _, ipRange := range tt.ipRanges {
 
-				if err := rdb.Insert(ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
+				if err := rdb.Insert(context.TODO(), ipRange.Range, ipRange.Reason); (err != nil) != tt.wantErr {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v, range passed: %q", err, tt.wantErr, ipRange.Range)
 					return
 				}
@@ -152,7 +151,7 @@ func TestClient_Find(t *testing.T) {
 				reasonToFind := rir.Reason
 				rangeToFind := rir.Range
 
-				err := rdb.Insert(rangeToFind, reasonToFind)
+				err := rdb.Insert(context.TODO(), rangeToFind, reasonToFind)
 				if err != nil {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
 					return
@@ -162,7 +161,7 @@ func TestClient_Find(t *testing.T) {
 					t.Fatalf("database inconsistent")
 				}
 
-				got, err := rdb.Find(ipToFind)
+				got, err := rdb.Find(context.TODO(), ipToFind)
 
 				if (err != nil) != tt.wantErr {
 					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
@@ -196,7 +195,7 @@ func TestClient_Remove(t *testing.T) {
 				reasonToFind := rir.Reason
 				rangeToFind := rir.Range
 
-				err := rdb.Insert(rangeToFind, reasonToFind)
+				err := rdb.Insert(context.TODO(), rangeToFind, reasonToFind)
 				if err != nil {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
 					t.FailNow()
@@ -208,7 +207,7 @@ func TestClient_Remove(t *testing.T) {
 				}
 				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
 
-				got, err := rdb.Find(ipToFind)
+				got, err := rdb.Find(context.TODO(), ipToFind)
 
 				if err != nil {
 					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
@@ -220,7 +219,7 @@ func TestClient_Remove(t *testing.T) {
 					t.FailNow()
 				}
 
-				err = rdb.Remove(rangeToFind)
+				err = rdb.Remove(context.TODO(), rangeToFind)
 
 				if err != nil {
 					t.Errorf("rdb.Remove(), RETURED ERROR = %q", err)
@@ -233,7 +232,7 @@ func TestClient_Remove(t *testing.T) {
 				}
 				t.Logf("rdb.Remove() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
 
-				_, err = rdb.Find(ipToFind)
+				_, err = rdb.Find(context.TODO(), ipToFind)
 
 				// should not be found after range deletion
 				if err == nil {
@@ -262,7 +261,7 @@ func TestClient_UpdateReasonOf(t *testing.T) {
 				reasonToFind := rir.Reason
 				rangeToFind := rir.Range
 
-				err := rdb.Insert(rangeToFind, reasonToFind)
+				err := rdb.Insert(context.TODO(), rangeToFind, reasonToFind)
 				if err != nil {
 					t.Errorf("rdb.Insert() error = %v, wantErr %v", err, tt.wantErr)
 					t.FailNow()
@@ -274,7 +273,7 @@ func TestClient_UpdateReasonOf(t *testing.T) {
 				}
 				t.Logf("rdb.Insert() Info  : Database is CONSISTENT after inserting range: %s", rangeToFind)
 
-				got, err := rdb.Find(ipToFind)
+				got, err := rdb.Find(context.TODO(), ipToFind)
 
 				if err != nil {
 					t.Errorf("rdb.Find(), NOT IN RANGE error = %q, wantErr %v\nRange: %q IP: %s", err.Error(), tt.wantErr, rangeToFind, ipToFind)
@@ -287,7 +286,7 @@ func TestClient_UpdateReasonOf(t *testing.T) {
 				}
 
 				newReason := randomString()
-				err = rdb.UpdateReasonOf(ipToFind, func(s string) string {
+				err = rdb.UpdateReasonOf(context.TODO(), ipToFind, func(s string) string {
 					return newReason
 				})
 
@@ -302,7 +301,7 @@ func TestClient_UpdateReasonOf(t *testing.T) {
 				}
 				t.Logf("rdb.UpdateReasonOf(): Database CONSISTENT after updating range: %s, ip: %s with new reason: %s", rangeToFind, ipToFind, newReason)
 
-				foundReason, err := rdb.Find(ipToFind)
+				foundReason, err := rdb.Find(context.TODO(), ipToFind)
 
 				// should be found after update
 				if err != nil {
@@ -328,7 +327,7 @@ type testCase struct {
 // Tests whether the database is in a cosistent state.
 func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 
-	attributes, err := rdb.all()
+	attributes, err := rdb.all(context.TODO())
 	if err != nil {
 		panic(err)
 	}
@@ -405,6 +404,7 @@ func consistent(rdb *Client, t *testing.T, ipRange string, iteration int) bool {
 		}
 	}
 
+	//lint:ignore S1008 explicitly check because of debug breakpoint
 	if state != LowerBound {
 		return false // for debugging breakpoints
 	}
@@ -499,7 +499,7 @@ func initRDB(db int) *Client {
 	}
 
 	// new default client
-	c, err := NewClient(Options{
+	c, err := NewClient(context.TODO(), Options{
 		Addr:     "localhost:6379",
 		Password: "",
 		DB:       db,
@@ -509,7 +509,7 @@ func initRDB(db int) *Client {
 	}
 
 	// reset database
-	if err := c.Reset(); err != nil {
+	if err := c.Reset(context.TODO()); err != nil {
 		panic(err)
 	}
 	return c

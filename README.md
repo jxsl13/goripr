@@ -1,6 +1,6 @@
 # Go Redis IP Ranges (goripr)
 
-[![Test](https://github.com/jxsl13/goripr/workflows/Test/badge.svg)](https://github.com/jxsl13/goripr/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/jxsl13/goripr)](https://goreportcard.com/report/github.com/jxsl13/goripr) [![GoDoc](https://godoc.org/github.com/jxsl13/goripr?status.svg)](https://godoc.org/github.com/jxsl13/goripr) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) [![codecov](https://codecov.io/gh/jxsl13/goripr/branch/master/graph/badge.svg)](https://codecov.io/gh/jxsl13/goripr) [![Total alerts](https://img.shields.io/lgtm/alerts/g/jxsl13/goripr.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/jxsl13/goripr/alerts/) [![Sourcegraph](https://sourcegraph.com/github.com/jxsl13/goripr/-/badge.svg)](https://sourcegraph.com/github.com/jxsl13/goripr?badge) [![deepsource](https://static.deepsource.io/deepsource-badge-light.svg)](https://deepsource.io/gh/jxsl13/goripr/)
+[![Test](https://github.com/jxsl13/goripr/actions/workflows/test.yaml/badge.svg)](https://github.com/jxsl13/goripr/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/jxsl13/goripr)](https://goreportcard.com/report/github.com/jxsl13/goripr) [![GoDoc](https://godoc.org/github.com/jxsl13/goripr?status.svg)](https://godoc.org/github.com/jxsl13/goripr) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) [![codecov](https://codecov.io/gh/jxsl13/goripr/branch/master/graph/badge.svg)](https://codecov.io/gh/jxsl13/goripr) [![Sourcegraph](https://sourcegraph.com/github.com/jxsl13/goripr/-/badge.svg)](https://sourcegraph.com/github.com/jxsl13/goripr?badge) [![deepsource](https://static.deepsource.io/deepsource-badge-light.svg)](https://deepsource.io/gh/jxsl13/goripr/)
 
 
 **goripr** is an eficient way to store IP ranges in a redis database and mapping those ranges to specific strings.
@@ -58,7 +58,7 @@ import (
 )
 
 var (
-    rdb           *goripr.Client
+    
     splitRegex    = regexp.MustCompile(`([0-9.\-\s/]+)#?\s*(.*)\s*$`)
     defaultReason = "VPN - https://website.com"
 
@@ -71,13 +71,9 @@ func init() {
     flag.StringVar(&findIP, "find", "", "-find 123.0.0.1")
     flag.Parse()
 
-    c, err := goripr.NewClient(goripr.Options{
-        Addr: "localhost:6379",
-        DB:   0,
-    })
-    rdb = c
-    if err != nil {
-        panic(err)
+    if addFile == "" && addFile == "" {
+        flag.PrintDefaults()
+        os.Exit(1)
     }
 }
 
@@ -88,8 +84,7 @@ func parseLine(line string) (ip, reason string, err error) {
     return "", "", errors.New("empty")
 }
 
-func addIPsToDatabase(filename string) error {
-
+func addIPsToDatabase(ctx context.Context, filename string) error {
     file, err := os.Open(filename)
     if err != nil {
         return err
@@ -105,7 +100,7 @@ func addIPsToDatabase(filename string) error {
             reason = defaultReason
         }
 
-        err = rdb.Insert(ip, reason)
+        err = rdb.Insert(ctx, ip, reason)
         if err != nil {
             if !errors.Is(err, goripr.ErrInvalidRange) {
                 log.Println(err, "Input:", ip)
@@ -117,21 +112,28 @@ func addIPsToDatabase(filename string) error {
 }
 
 func main() {
+    ctx := context.Background()
+    rdb, err := goripr.NewClient(ctx, goripr.Options{
+        Addr: "localhost:6379",
+        DB:   0,
+    })
+    if err != nil {
+        log.Println("error:", err)
+        os.Exit(1)
+    }
     defer rdb.Close()
 
     if addFile != "" {
-        err := addIPsToDatabase(addFile)
-        if err != nil {
-            log.Printf("exit: %v", err)
-            return
-        }
-    }
-
-    if findIP != "" {
-        reason, err := rdb.Find(findIP)
+        err := addIPsToDatabase(ctx, addFile)
         if err != nil {
             log.Println("error:", err)
-            return
+            os.Exit(1)
+        }
+    } else if findIP != "" {
+        reason, err := rdb.Find(ctx, findIP)
+        if err != nil {
+            log.Println("error:", err)
+            os.Exit(1)
         }
         log.Println("IP:", findIP, "Reason:", reason)
         return
