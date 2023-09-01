@@ -47,98 +47,101 @@ The current RAM that is being used is about 30MB, which is acceptable.
 package main
 
 import (
-    "bufio"
-    "errors"
-    "flag"
-    "log"
-    "os"
-    "regexp"
+	"bufio"
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"regexp"
 
-    "github.com/jxsl13/goripr/v2"
+	"github.com/jxsl13/goripr/v2"
 )
 
 var (
-    
-    splitRegex    = regexp.MustCompile(`([0-9.\-\s/]+)#?\s*(.*)\s*$`)
-    defaultReason = "VPN - https://website.com"
+	splitRegex    = regexp.MustCompile(`([0-9.\-\s/]+)#?\s*(.*)\s*$`)
+	defaultReason = "VPN - https://website.com"
 
-    addFile = ""
-    findIP  = ""
+	addFile = ""
+	findIP  = ""
 )
 
 func init() {
-    flag.StringVar(&addFile, "add", "", "-add filename.txt")
-    flag.StringVar(&findIP, "find", "", "-find 123.0.0.1")
-    flag.Parse()
+	flag.StringVar(&addFile, "add", "", "-add filename.txt")
+	flag.StringVar(&findIP, "find", "", "-find 123.0.0.1")
+	flag.Parse()
 
-    if addFile == "" && addFile == "" {
-        flag.PrintDefaults()
-        os.Exit(1)
-    }
+	if addFile == "" && findIP == "" {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
 }
 
 func parseLine(line string) (ip, reason string, err error) {
-    if matches := splitRegex.FindStringSubmatch(line); len(matches) > 0 {
-        return matches[1], matches[2], nil
-    }
-    return "", "", errors.New("empty")
+	if matches := splitRegex.FindStringSubmatch(line); len(matches) > 0 {
+		return matches[1], matches[2], nil
+	}
+	return "", "", errors.New("empty")
 }
 
-func addIPsToDatabase(ctx context.Context, filename string) error {
-    file, err := os.Open(filename)
-    if err != nil {
-        return err
-    }
+func addIPsToDatabase(rdb *goripr.Client, ctx context.Context, filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
 
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-        ip, reason, err := parseLine(scanner.Text())
-        if err != nil {
-            continue
-        }
-        if reason == "" {
-            reason = defaultReason
-        }
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		ip, reason, err := parseLine(scanner.Text())
+		if err != nil {
+			continue
+		}
+		if reason == "" {
+			reason = defaultReason
+		}
 
-        err = rdb.Insert(ctx, ip, reason)
-        if err != nil {
-            if !errors.Is(err, goripr.ErrInvalidRange) {
-                log.Println(err, "Input:", ip)
-            }
-            continue
-        }
-    }
-    return nil
+		err = rdb.Insert(ctx, ip, reason)
+		if err != nil {
+			if !errors.Is(err, goripr.ErrInvalidRange) {
+				fmt.Println(err, "Input:", ip)
+			}
+			continue
+		}
+	}
+	return nil
 }
 
 func main() {
-    ctx := context.Background()
-    rdb, err := goripr.NewClient(ctx, goripr.Options{
-        Addr: "localhost:6379",
-        DB:   0,
-    })
-    if err != nil {
-        log.Println("error:", err)
-        os.Exit(1)
-    }
-    defer rdb.Close()
+	ctx := context.Background()
+	rdb, err := goripr.NewClient(ctx, goripr.Options{
+		Addr: "localhost:6379",
+		DB:   0,
+	})
+	if err != nil {
+		fmt.Println("error:", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
 
-    if addFile != "" {
-        err := addIPsToDatabase(ctx, addFile)
-        if err != nil {
-            log.Println("error:", err)
-            os.Exit(1)
-        }
-    } else if findIP != "" {
-        reason, err := rdb.Find(ctx, findIP)
-        if err != nil {
-            log.Println("error:", err)
-            os.Exit(1)
-        }
-        log.Println("IP:", findIP, "Reason:", reason)
-        return
-    }
+	if addFile != "" {
+		err := addIPsToDatabase(rdb, ctx, addFile)
+		if err != nil {
+			fmt.Println("error:", err)
+			os.Exit(1)
+		}
+	} else if findIP != "" {
+		reason, err := rdb.Find(ctx, findIP)
+		if err != nil {
+			fmt.Println("IP:", findIP, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("IP:", findIP, "Reason:", reason)
+		return
+	}
 }
+
+// Output: IP: 84.141.32.1 Reason: any range where the first IP is smaller than the second
+// Output: IP: 84.141.32.0 error: the given IP was not found in any database ranges
 ```
 
 ### Example text file
