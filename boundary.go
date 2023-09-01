@@ -1,12 +1,13 @@
 package goripr
 
 import (
+	"context"
 	"math"
 	"net"
 	"strconv"
 
-	"github.com/go-redis/redis"
-	"github.com/xgfone/netaddr"
+	"github.com/redis/go-redis/v9"
+	"github.com/xgfone/go-netaddr"
 )
 
 var (
@@ -200,14 +201,14 @@ func (b *boundary) EqualReason(other boundary) bool {
 }
 
 // Insert adds the necessary commands to the transaction in order to be properly inserted.
-func (b *boundary) Insert(tx redis.Pipeliner) redis.Pipeliner {
-	tx.ZAdd(IPRangesKey,
+func (b *boundary) Insert(ctx context.Context, tx redis.Pipeliner) redis.Pipeliner {
+	tx.ZAdd(ctx, IPRangesKey,
 		redis.Z{
 			Score:  b.Float64,
 			Member: b.ID,
 		},
 	)
-	tx.HMSet(b.ID,
+	tx.HMSet(ctx, b.ID,
 		map[string]interface{}{
 			"low":    b.LowerBound,
 			"high":   b.UpperBound,
@@ -218,8 +219,8 @@ func (b *boundary) Insert(tx redis.Pipeliner) redis.Pipeliner {
 
 // Update adds the needed commands to the transaction in order to update the assiciated attributes of the
 // unserlying IP. The IP itself cannot be updated with this command.
-func (b *boundary) Update(tx redis.Pipeliner) redis.Pipeliner {
-	tx.HMSet(b.ID,
+func (b *boundary) Update(ctx context.Context, tx redis.Pipeliner) redis.Pipeliner {
+	tx.HMSet(ctx, b.ID,
 		map[string]interface{}{
 			"low":    b.LowerBound,
 			"high":   b.UpperBound,
@@ -229,13 +230,13 @@ func (b *boundary) Update(tx redis.Pipeliner) redis.Pipeliner {
 }
 
 // Remove adds the necessary commands to the transaction in order to be properly removed.
-func (b *boundary) Remove(tx redis.Pipeliner) redis.Pipeliner {
-	tx.ZRem(IPRangesKey, b.ID)
-	tx.Del(b.ID)
+func (b *boundary) Remove(ctx context.Context, tx redis.Pipeliner) redis.Pipeliner {
+	tx.ZRem(ctx, IPRangesKey, b.ID)
+	tx.Del(ctx, b.ID)
 	return tx
 }
 
 // Get adds the necessary commands to the transaction in order to retrieve the attributs from the database.
-func (b *boundary) Get(tx redis.Pipeliner) *redis.SliceCmd {
-	return tx.HMGet(b.ID, "low", "high", "reason")
+func (b *boundary) Get(ctx context.Context, tx redis.Pipeliner) *redis.SliceCmd {
+	return tx.HMGet(ctx, b.ID, "low", "high", "reason")
 }
