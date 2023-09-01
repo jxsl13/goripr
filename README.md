@@ -54,7 +54,7 @@ import (
     "os"
     "regexp"
 
-    "github.com/jxsl13/goripr"
+    "github.com/jxsl13/goripr/v2"
 )
 
 var (

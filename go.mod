@@ -1,4 +1,4 @@
-module github.com/jxsl13/goripr
+module github.com/jxsl13/goripr/v2
 
 go 1.18
 
