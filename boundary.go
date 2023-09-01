@@ -101,7 +101,7 @@ func newBoundary(ip interface{}, reason string, lower, upper bool) boundary {
 }
 
 // Int64String returns the string representation of the Int64 value
-func (b *boundary) Int64String() string {
+func (b boundary) Int64String() string {
 	return strconv.FormatInt(b.Int64, 10)
 }
 
