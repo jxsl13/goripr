@@ -1,3 +1,4 @@
 .vscode/settings.json
 TODO.txt
 debug.test
+coverage.out
