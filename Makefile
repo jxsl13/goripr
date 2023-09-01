@@ -1,7 +1,10 @@
 
 
-environment:
-	docker-compose up -d
+up:
+	docker compose up -d
+
+down:
+	docker compose down
 
 test:
-	go test -v -timeout 1800s -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+	go test -timeout 1800s -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
