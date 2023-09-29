@@ -3,7 +3,7 @@ module github.com/jxsl13/goripr/v2
 go 1.18
 
 require (
-	github.com/redis/go-redis/v9 v9.1.0
+	github.com/redis/go-redis/v9 v9.2.0
 	github.com/xgfone/go-netaddr v0.6.0
 )
 
