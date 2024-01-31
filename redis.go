@@ -799,3 +799,81 @@ func (c *Client) UpdateReasonOf(ctx context.Context, ip string, fn UpdateFunc) (
 
 	return ErrIPNotFound
 }
+
+func (rdb *Client) consistent(ctx context.Context, ipRange ...string) error {
+	ipr := ""
+	if len(ipRange) > 0 {
+		ipr = ipRange[0]
+	}
+
+	attributes, err := rdb.all(context.TODO())
+	if err != nil {
+		panic(err)
+	}
+
+	const LowerBound = 0
+	const UpperBound = 1
+
+	if ipr != "" {
+		low, high, err := parseRange(ipr, "")
+		if err != nil {
+			return err
+		}
+
+		foundLow, foundHigh := false, false
+		for _, attr := range attributes {
+			if attr.EqualIP(low) && attr.LowerBound {
+				foundLow = true
+			}
+
+			if attr.EqualIP(high) && attr.UpperBound {
+				foundHigh = true
+			}
+		}
+		if !foundLow || !foundHigh {
+			if !foundLow && !foundHigh {
+				return fmt.Errorf("did neither find inserted LOWERBOUND neither UPPERBOUND")
+			} else if !foundLow {
+				return fmt.Errorf("did not find inserted LOWERBOUND")
+			}
+			return fmt.Errorf("did not find inserted UPPERBOUND")
+		}
+	}
+
+	cnt := 0
+	state := LowerBound
+	for idx, attr := range attributes {
+
+		if attr.LowerBound && attr.UpperBound {
+			if state != UpperBound {
+				return fmt.Errorf("database inconsistent: double boundary: idx=%d state=%d, expected state=%d", idx, state, UpperBound)
+			}
+
+			cnt += 2
+		} else if attr.LowerBound {
+			if state != UpperBound {
+				return fmt.Errorf("database inconsistent: lower boundary: idx=%d state=%d, expected state=%d", idx, state, UpperBound)
+			}
+			cnt++
+			state = cnt % 2
+		} else if attr.UpperBound {
+			if state != LowerBound {
+				return fmt.Errorf("database inconsistent: upper boundary: idx=%d state=%d, expected state=%d", idx, state, LowerBound)
+			}
+
+			// reasons consistent
+			if idx > 0 && attr.Reason != attributes[idx-1].Reason {
+				return fmt.Errorf("reason mismatch: idx=%4d reason=%q idx=%4d reason=%q", idx-1, attributes[idx-1].Reason, idx, attr.Reason)
+			}
+
+			cnt++
+			state = cnt % 2
+		}
+	}
+
+	if state != LowerBound {
+		return fmt.Errorf("database inconsistent: final boundary is supposed to be a lower boundary")
+	}
+
+	return nil
+}
