@@ -175,7 +175,7 @@ func (c *Client) all(ctx context.Context) (inside []boundary, err error) {
 		}
 
 		if len(result) != 3 {
-			panic("database inconsistent")
+			panic(fmt.Sprintf("database inconsistent: expected 3 result attributes, got %d", len(result)))
 		}
 
 		low := false
@@ -215,7 +215,7 @@ func (c *Client) all(ctx context.Context) (inside []boundary, err error) {
 func (c *Client) vicinity(ctx context.Context, low, high boundary, num int64) (below, inside, above []boundary, err error) {
 
 	if num < 0 {
-		panic("passed num parameter has to be >= 0")
+		panic(fmt.Sprintf("passed num parameter must be >= 0, got %d", num))
 	}
 
 	below = make([]boundary, 0, num)
@@ -474,7 +474,7 @@ func (c *Client) Insert(ctx context.Context, ipRange, reason string) error {
 	}
 
 	if len(belowN) == 0 || len(aboveN) == 0 {
-		panic(ErrDatabaseInconsistent)
+		panic(fmt.Sprintf("database inconsistent: %d below, %d above", len(belowN), len(aboveN)))
 	}
 
 	// remove inside
@@ -667,7 +667,7 @@ func (c *Client) Find(ctx context.Context, ip string) (reason string, err error)
 		if belowNearest.EqualReason(aboveNearest) {
 			return belowNearest.Reason, nil
 		}
-		panic("reasons inconsistent")
+		panic(fmt.Sprintf("reasons inconsistent: %s != %s", belowNearest.Reason, aboveNearest.Reason))
 	}
 
 	return "", ErrIPNotFound
@@ -759,7 +759,7 @@ func (c *Client) UpdateReasonOf(ctx context.Context, ip string, fn UpdateFunc) (
 				aboveNearest.Reason = fn(aboveNearest.Reason)
 				aboveNearest.Update(ctx, tx)
 			} else {
-				panic("database inconsistent")
+				panic(fmt.Sprintf("database inconsistent: found two lower bounds: %s, %s", found.IP, aboveNearest.IP))
 			}
 		} else {
 			// upperbound
@@ -772,7 +772,7 @@ func (c *Client) UpdateReasonOf(ctx context.Context, ip string, fn UpdateFunc) (
 				// upper bound
 				found.Insert(ctx, tx)
 			} else {
-				panic("database inconsistent")
+				panic(fmt.Sprintf("database inconsistent: found two upper bounds: %s, %s", found.IP, aboveNearest.IP))
 			}
 		}
 
@@ -794,7 +794,7 @@ func (c *Client) UpdateReasonOf(ctx context.Context, ip string, fn UpdateFunc) (
 			_, err = tx.Exec(ctx)
 			return err
 		}
-		panic("database reasons inconsistent")
+		panic(fmt.Sprintf("database reasons inconsistent: %s != %s", belowNearest.Reason, aboveNearest.Reason))
 	}
 
 	return ErrIPNotFound
