@@ -190,14 +190,9 @@ func (b *boundary) EqualIP(other boundary) bool {
 		b.Float64 == other.Float64
 }
 
-// EqualReason returns true if both reasons are equal, false otherwise.
-func (b *boundary) HasReason() bool {
-	return b.Reason != ""
-}
-
 // EqualReason returns true if both reasons are equal and not empty, false otherwise.
 func (b *boundary) EqualReason(other boundary) bool {
-	return b.HasReason() && other.HasReason() && b.Reason == other.Reason
+	return b.Reason == other.Reason
 }
 
 // Insert adds the necessary commands to the transaction in order to be properly inserted.
