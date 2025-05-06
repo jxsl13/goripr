@@ -598,7 +598,7 @@ func (c *Client) Remove(ctx context.Context, ipRange string) error {
 	belowCut.Reason = belowNearest.Reason
 
 	aboveCut := high.Above()
-	aboveCut.SetUpperBound()
+	aboveCut.SetLowerBound()
 	aboveCut.Reason = aboveNearest.Reason
 
 	if belowNearest.IsLowerBound() {
